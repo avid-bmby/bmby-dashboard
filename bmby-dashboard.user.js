@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         BMBY – Link Telephony Dashboard
 // @namespace    bmby-link-telephony-dashboard
-// @version      1.1.3
-// @description  VOIP + Extension + Password dashboard with history and DEV mode
+// @version      1.1.4
+// @description  VOIP + Extension + Password dashboard with history + DEV toggle + GitHub auto-update
 // @match        https://bmby.com/nihul/*
 // @match        https://www.bmby.com/nihul/*
 // @match        https://bmby.com/*
@@ -11,59 +11,53 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_deleteValue
-
-
 // @updateURL    https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
 // @downloadURL  https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
 // ==/UserScript==
-
 
 (() => {
   "use strict";
 
   /* =============================
      DEV MODE (UI toggle + styling)
-     - Stored in localStorage so only YOUR browser profile is affected
+     - Stored in localStorage => only YOUR browser/profile is affected
   ============================== */
   const DEV_KEY = "BMBY_DEV_MODE";
-  let DEV_MODE = localStorage.getItem(DEV_KEY) === "1";
+  const isDev = () => localStorage.getItem(DEV_KEY) === "1";
+  const setDev = (on) => on ? localStorage.setItem(DEV_KEY, "1") : localStorage.removeItem(DEV_KEY);
+  const toggleDev = () => setDev(!isDev());
 
-  function applyDevClass() {
-    if (DEV_MODE) document.documentElement.classList.add("bmby-dev-mode");
-    else document.documentElement.classList.remove("bmby-dev-mode");
-  }
+  const applyDevClass = () => {
+    document.documentElement.classList.toggle("bmby-dev-mode", isDev());
+  };
 
-  function toggleDevMode() {
-    DEV_MODE = !DEV_MODE;
-    if (DEV_MODE) localStorage.setItem(DEV_KEY, "1");
-    else localStorage.removeItem(DEV_KEY);
-    applyDevClass();
-    location.reload();
-  }
-
-  applyDevClass();
-
-  /* -----------------------------
-     Unified Storage (GM_* preferred)
-  ------------------------------ */
+  /* =============================
+     Unified Storage (GM preferred) - SAFE for objects/arrays
+     - GM_* stores native values
+     - localStorage stores JSON strings
+  ============================== */
   const HasGM = typeof GM_getValue === "function" && typeof GM_setValue === "function";
 
   const Store = {
-    getItem(k) {
+    get(k, fallback = null) {
       try {
-        if (HasGM) return GM_getValue(k, null);
-        return localStorage.getItem(k);
-      } catch { return null; }
+        if (HasGM) return GM_getValue(k, fallback);
+        const raw = localStorage.getItem(k);
+        if (raw == null) return fallback;
+        try { return JSON.parse(raw); } catch { return raw; }
+      } catch {
+        return fallback;
+      }
     },
-    setItem(k, v) {
+    set(k, v) {
       try {
         if (HasGM) return GM_setValue(k, v);
-        return localStorage.setItem(k, v);
+        return localStorage.setItem(k, JSON.stringify(v));
       } catch {}
     },
-    removeItem(k) {
+    remove(k) {
       try {
-        if (HasGM) return GM_deleteValue(k);
+        if (HasGM && typeof GM_deleteValue === "function") return GM_deleteValue(k);
         return localStorage.removeItem(k);
       } catch {}
     }
@@ -71,9 +65,9 @@
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  /* -----------------------------
+  /* =============================
      Constants / Keys
-  ------------------------------ */
+  ============================== */
   const DASH_BTN_ID = "bmby-dash-btn";
   const DASH_ID = "bmby-dash";
   const DASH_HDR_ID = "bmby-dash-hdr";
@@ -89,9 +83,11 @@
     pw:   "bmby_hist_pw_v1",
   };
 
+  // VOIP flow token (prevents loops; allows automation only when initiated)
   const VOIP_FLOW_KEY = "bmby_voip_popup_ctx";
   const VOIP_FLOW_TTL = 60_000;
 
+  // PW flow data
   const PW_STORAGE_KEY = "bmby_pw_req_v42";
 
   const VOIP_SETTINGS_PATH = "/nihul/VoIP/Settings.php";
@@ -99,9 +95,9 @@
   const INTERFACES_URL_TEMPLATE = "/nihul/GridRemoteSite.php?ProjectID={id}";
   const VOIP_EXT_POST_PATH = "/nihul/VoIP/SettingsExt.php";
 
-  /* -----------------------------
-     UI helpers
-  ------------------------------ */
+  /* =============================
+     Helpers
+  ============================== */
   const toast = (msg, ok = true) => {
     const d = document.createElement("div");
     d.textContent = msg;
@@ -125,8 +121,7 @@
         ta.style.position = "fixed";
         ta.style.left = "-9999px";
         document.body.appendChild(ta);
-        ta.focus();
-        ta.select();
+        ta.focus(); ta.select();
         const ok = document.execCommand("copy");
         ta.remove();
         return ok;
@@ -149,17 +144,25 @@
     return d.toLocaleString("he-IL", { hour12: false });
   }
 
-  /* -----------------------------
-     History (per feature)
-  ------------------------------ */
+  function escapeHtml(str) {
+    return String(str)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  /* =============================
+     History (GM/localStorage safe)
+  ============================== */
   function normalizeHistoryArray(raw) {
     const out = [];
     if (!Array.isArray(raw)) return out;
 
     for (const item of raw) {
-      if (typeof item === "string") {
-        out.push({ value: item, ts: Date.now() });
-      } else if (item && typeof item === "object") {
+      if (typeof item === "string") out.push({ value: item, ts: Date.now() });
+      else if (item && typeof item === "object") {
         const value = item.value ?? item.v ?? item.pid ?? item.ext ?? item.pw;
         const ts = item.ts ?? item.t ?? item.time ?? item.date;
         if (value != null) out.push({ value: String(value), ts: Number(ts) || Date.now() });
@@ -171,33 +174,33 @@
   function pushHistory(type, value) {
     const key = HIST_KEYS[type];
     if (!key) return;
-    try {
-      const raw = Store.getItem(key);
-      const arr = normalizeHistoryArray(raw ? JSON.parse(raw) : []);
-      const e = { value: String(value), ts: Date.now() };
-      const next = [e, ...arr.filter(x => String(x.value) !== String(e.value))].slice(0, HIST_MAX);
-      Store.setItem(key, JSON.stringify(next));
-    } catch {}
+
+    const raw = Store.get(key, []);
+    const arr = normalizeHistoryArray(raw);
+
+    const e = { value: String(value), ts: Date.now() };
+    const next = [e, ...arr.filter(x => String(x.value) !== String(e.value))].slice(0, HIST_MAX);
+
+    Store.set(key, next);
   }
 
   function getHistory(type) {
     const key = HIST_KEYS[type];
     if (!key) return [];
-    try {
-      const raw = Store.getItem(key);
-      const arr = normalizeHistoryArray(raw ? JSON.parse(raw) : []);
-      Store.setItem(key, JSON.stringify(arr.slice(0, HIST_MAX)));
-      return arr.slice(0, HIST_MAX);
-    } catch { return []; }
+
+    const raw = Store.get(key, []);
+    const arr = normalizeHistoryArray(raw).slice(0, HIST_MAX);
+    Store.set(key, arr); // sanitize
+    return arr;
   }
 
   function clearAllHistory() {
-    Object.values(HIST_KEYS).forEach(k => Store.removeItem(k));
+    Object.values(HIST_KEYS).forEach(k => Store.remove(k));
   }
 
-  /* -----------------------------
-     Draggable (fixed) - supports ignore selector
-  ------------------------------ */
+  /* =============================
+     Draggable (fixed)
+  ============================== */
   function makeDraggableFixed(el, handle, posKey, {
     zIndex = 2147483646,
     allowInteractive = false,
@@ -205,15 +208,8 @@
   } = {}) {
     const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 
-    const loadPos = () => {
-      try {
-        const raw = Store.getItem(posKey);
-        return raw ? JSON.parse(raw) : null;
-      } catch { return null; }
-    };
-    const savePos = (pos) => {
-      try { Store.setItem(posKey, JSON.stringify(pos)); } catch {}
-    };
+    const loadPos = () => Store.get(posKey, null);
+    const savePos = (pos) => Store.set(posKey, pos);
 
     el.style.setProperty("position", "fixed", "important");
     el.style.setProperty("z-index", String(zIndex), "important");
@@ -241,7 +237,6 @@
 
     const onDown = (e) => {
       if (e.pointerType === "mouse" && e.button !== 0) return;
-
       if (ignoreSelector && e.target?.closest?.(ignoreSelector)) return;
 
       if (!allowInteractive) {
@@ -331,22 +326,28 @@
   }
 
   function hasSavedPos(key) {
-    try {
-      const raw = Store.getItem(key);
-      if (!raw) return false;
-      const obj = JSON.parse(raw);
-      return obj && typeof obj.x === "number" && typeof obj.y === "number";
-    } catch { return false; }
+    const obj = Store.get(key, null);
+    return !!(obj && typeof obj.x === "number" && typeof obj.y === "number");
   }
 
-  /* -----------------------------
+  /* =============================
      Styles
-  ------------------------------ */
+  ============================== */
   function ensureStyles() {
     if (document.getElementById("bmby-dash-style")) return;
     const s = document.createElement("style");
     s.id = "bmby-dash-style";
     s.textContent = `
+      /* DEV mode: clear visual indicator */
+      .bmby-dev-mode #${DASH_ID}{
+        box-shadow:0 16px 55px rgba(255,120,0,.35) !important;
+        outline:3px solid rgba(255,140,0,.75) !important;
+      }
+      .bmby-dev-mode #${DASH_BTN_ID}{
+        background:#ff8c00 !important;
+        color:#111 !important;
+      }
+
       #${DASH_BTN_ID}{
         position:fixed;right:16px;bottom:16px;
         border:0;border-radius:999px;
@@ -371,7 +372,7 @@
       }
 
       #${DASH_ID}{
-        width:440px;
+        width:460px;
         max-width:92vw;
         background:#111;
         color:#fff;
@@ -393,13 +394,7 @@
         cursor:grab;
       }
 
-      .bmby-dash-title{
-        font-weight:900;
-        letter-spacing:.2px;
-        user-select:none;
-        touch-action:none;
-      }
-
+      .bmby-dash-title{ font-weight:900; letter-spacing:.2px; user-select:none; }
       .bmby-dash-actions{ display:flex;gap:8px;align-items:center; }
 
       .bmby-dash-iconbtn{
@@ -471,42 +466,13 @@
       .bmby-history .item:hover{ background:rgba(255,255,255,.06); }
       .bmby-history .v{ opacity:.88; font-size:12px; }
       .bmby-history .time{ opacity:.6; font-size:11px; white-space:nowrap; }
-
-      /* =========================
-         DEV MODE visual cues
-      ========================= */
-      html.bmby-dev-mode #${DASH_ID}{
-        border:3px solid #facc15;
-        box-shadow:0 0 0 3px rgba(250,204,21,.35), 0 16px 45px rgba(0,0,0,.45);
-      }
-      html.bmby-dev-mode #${DASH_BACKDROP_ID}{
-        background:rgba(250,204,21,.10);
-      }
-      html.bmby-dev-mode .bmby-dash-title::after{
-        content:"  [DEV]";
-        color:#facc15;
-        font-weight:900;
-      }
-      html.bmby-dev-mode #${DASH_BTN_ID}{
-        background:#facc15;
-        color:#111;
-      }
     `;
     document.head.appendChild(s);
   }
 
-  function escapeHtml(str) {
-    return String(str)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
-  }
-
-  /* -----------------------------
-     Dashboard build
-  ------------------------------ */
+  /* =============================
+     Dashboard UI
+  ============================== */
   function buildDashboard() {
     ensureStyles();
     applyDevClass();
@@ -523,32 +489,23 @@
 
     const title = document.createElement("div");
     title.className = "bmby-dash-title";
-    title.textContent = "לינק טלפוניה";
+    title.textContent = isDev() ? "לינק טלפוניה (DEV)" : "לינק טלפוניה";
 
     const actions = document.createElement("div");
     actions.className = "bmby-dash-actions";
 
-    // DEV button (first)
     const devBtn = document.createElement("button");
     devBtn.className = "bmby-dash-iconbtn";
-    devBtn.textContent = DEV_MODE ? "DEV ON" : "DEV OFF";
-    if (DEV_MODE) {
-      devBtn.style.background = "#facc15";
-      devBtn.style.color = "#111";
-    }
-    devBtn.title = "DEV Mode (רק אצלך בדפדפן)";
-    devBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      toggleDevMode();
-    });
-
-    const closeAllBtn = document.createElement("button");
-    closeAllBtn.className = "bmby-dash-iconbtn";
-    closeAllBtn.textContent = "סגור הכל";
+    devBtn.textContent = isDev() ? "DEV: ON" : "DEV: OFF";
+    devBtn.title = "מצב DEV משפיע רק על הדפדפן שלך";
 
     const clearBtn = document.createElement("button");
     clearBtn.className = "bmby-dash-iconbtn";
     clearBtn.textContent = "ניקוי";
+
+    const closeAllBtn = document.createElement("button");
+    closeAllBtn.className = "bmby-dash-iconbtn";
+    closeAllBtn.textContent = "סגור הכל";
 
     const xBtn = document.createElement("button");
     xBtn.className = "bmby-dash-iconbtn";
@@ -637,7 +594,17 @@
     xBtn.addEventListener("click", (e) => { e.preventDefault(); closeDashboard(); });
     closeAllBtn.addEventListener("click", (e) => { e.preventDefault(); closeDashboard(); });
 
-    // DEFAULT CENTER (only if no saved position)
+    // DEV button
+    devBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      toggleDev();
+      applyDevClass();
+      devBtn.textContent = isDev() ? "DEV: ON" : "DEV: OFF";
+      title.textContent = isDev() ? "לינק טלפוניה (DEV)" : "לינק טלפוניה";
+      toast(isDev() ? "DEV הופעל (רק בדפדפן שלך)" : "DEV כובה", true);
+    });
+
+    // Default center if no saved position
     if (!hasSavedPos(POS_DASH_KEY)) {
       panel.style.left = "50%";
       panel.style.top = "50%";
@@ -646,7 +613,7 @@
       panel.style.transform = "translate(-50%, -50%)";
     }
 
-    // DRAG DASHBOARD: drag the whole header (ignore action buttons)
+    // Drag dashboard by header (ignore buttons)
     makeDraggableFixed(panel, hdr, POS_DASH_KEY, {
       zIndex: 2147483646,
       allowInteractive: true,
@@ -658,7 +625,7 @@
     const t2ext = panel.querySelector("#bmby-t2-ext");
     const t2run = panel.querySelector("#bmby-t2-run");
     const t3pid = panel.querySelector("#bmby-t3-pid");
-    const t3pw = panel.querySelector("#bmby-t3-pw");
+    const t3pw  = panel.querySelector("#bmby-t3-pw");
     const t3run = panel.querySelector("#bmby-t3-run");
 
     function renderHistory(type, wrapId, onPick) {
@@ -712,7 +679,7 @@
 
     function renderAllHistories() {
       renderHistory("voip", "bmby-hist-voip", (v) => { t1pid.value = v; toast("הוזן לכלי 1", true); });
-      renderHistory("ext", "bmby-hist-ext", (v) => { t2ext.value = v; toast("הוזן לכלי 2", true); });
+      renderHistory("ext",  "bmby-hist-ext",  (v) => { t2ext.value = v; toast("הוזן לכלי 2", true); });
       renderHistoryPw();
     }
 
@@ -727,11 +694,11 @@
       t3pw.value = "";
 
       clearAllHistory();
-      Store.removeItem(VOIP_FLOW_KEY);
-      Store.removeItem(PW_STORAGE_KEY);
+      Store.remove(VOIP_FLOW_KEY);
+      Store.remove(PW_STORAGE_KEY);
 
-      Store.removeItem(POS_BTN_KEY);
-      Store.removeItem(POS_DASH_KEY);
+      Store.remove(POS_BTN_KEY);
+      Store.remove(POS_DASH_KEY);
 
       renderAllHistories();
       toast("נוקה: ערכים + היסטוריה + טוקנים + מיקומים", true);
@@ -786,9 +753,9 @@
     if (!isOpen) window.__bmbyRenderAllHistories?.();
   }
 
-  /* -----------------------------
-     Floating button (Dashboard)
-  ------------------------------ */
+  /* =============================
+     Floating button
+  ============================== */
   function ensureDashButton() {
     ensureStyles();
     applyDevClass();
@@ -796,7 +763,7 @@
 
     const btn = document.createElement("button");
     btn.id = DASH_BTN_ID;
-    btn.textContent = DEV_MODE ? "Dashboard [DEV]" : "Dashboard";
+    btn.textContent = "Dashboard";
     btn.title = "Alt+Shift+D (אפשר לגרור)";
     document.body.appendChild(btn);
 
@@ -808,27 +775,25 @@
     });
   }
 
-  /* -----------------------------
-     TOOL 1: VOIP
-  ------------------------------ */
-  const setVoipFlowToken = (pid) => {
-    try { Store.setItem(VOIP_FLOW_KEY, JSON.stringify({ pid: String(pid), ts: Date.now() })); } catch {}
-  };
+  /* =============================
+     TOOL 1: VOIP flow (works from anywhere, no loops)
+  ============================== */
+  const setVoipFlowToken = (pid) => Store.set(VOIP_FLOW_KEY, { pid: String(pid), ts: Date.now() });
+
   const hasValidVoipFlowToken = (pid) => {
-    let ctx = null;
-    try {
-      const raw = Store.getItem(VOIP_FLOW_KEY);
-      ctx = raw ? JSON.parse(raw) : null;
-    } catch {}
+    const ctx = Store.get(VOIP_FLOW_KEY, null);
     if (!ctx) return false;
+
     const fresh = (Date.now() - Number(ctx.ts || 0)) < VOIP_FLOW_TTL;
     const match = pid && String(pid) === String(ctx.pid);
-    if (!fresh) Store.removeItem(VOIP_FLOW_KEY);
+
+    if (!fresh) Store.remove(VOIP_FLOW_KEY);
     return fresh && match;
   };
+
   const consumeVoipTokenIfMatch = (pid) => {
     const ok = hasValidVoipFlowToken(pid);
-    if (ok) Store.removeItem(VOIP_FLOW_KEY);
+    if (ok) Store.remove(VOIP_FLOW_KEY);
     return ok;
   };
 
@@ -858,7 +823,7 @@
           `Account Code: ${account}\n` +
           `Partition: ${partition}`;
         const copied = await copyToClipboard(account);
-        alert(text + (copied ? `\n\n הועתק ללוח (Account בלבד)` : `\n\n לא הצלחתי להעתיק ללוח`));
+        alert(text + (copied ? `\n\n✅ הועתק ללוח (Account בלבד)` : `\n\n⚠️ לא הצלחתי להעתיק ללוח`));
         return;
       }
       await sleep(250);
@@ -877,23 +842,69 @@
     const pid = projectNum(pidP);
     const u = new URL(location.href);
 
+    // If already on project page, open directly
     if (/\/nihul\/EditProject\.php$/i.test(u.pathname)) {
       const cid = u.searchParams.get("CompanyID");
       const p = u.searchParams.get("ProjectID");
       if (cid && p) { setVoipFlowToken(p); openVoipInNewTab(cid, p); return; }
     }
 
+    // If already on Wizard with CompanyID + FindedProjects
     if (/\/nihul\/Wizard\.php$/i.test(u.pathname)) {
       const cid = u.searchParams.get("CompanyID");
       const p = u.searchParams.get("FindedProjects");
       if (cid && p) { setVoipFlowToken(p); openVoipInNewTab(cid, p); return; }
     }
 
+    // Otherwise, go to Wizard?q=P#### (from anywhere)
     setVoipFlowToken(pid);
     location.href = location.origin + `${WIZARD_PATH}?q=` + encodeURIComponent("P" + pid);
   }
 
-  // Ctrl+Shift+V hotkey
+  // Auto step A: Wizard.php?q=P#### -> click td[onclick] that matches FindedProjects=pid (only if token matches)
+  function autoContinueFromWizardIfNeeded() {
+    const u = new URL(location.href);
+    if (!/\/nihul\/Wizard\.php$/i.test(u.pathname)) return;
+    const q = u.searchParams.get("q");
+    if (!q) return;
+
+    const pid = (String(q).match(/\d+/) || [])[0];
+    if (!pid) return;
+
+    if (!hasValidVoipFlowToken(pid)) return; // prevent loops if user navigated manually
+
+    let tries = 0;
+    const timer = setInterval(() => {
+      tries++;
+      const tds = [...document.querySelectorAll("td[onclick]")];
+      const td = tds.find(x => {
+        const oc = x.getAttribute("onclick") || "";
+        return oc.includes("Wizard.php") && oc.includes("CompanyID=") && oc.includes("FindedProjects=" + pid);
+      });
+
+      if (td) {
+        clearInterval(timer);
+        td.click();
+      } else if (tries > 60) {
+        clearInterval(timer);
+        toast("לא מצאתי שורת Wizard מתאימה (אולי אין הרשאה/אין תוצאות).", false);
+      }
+    }, 250);
+  }
+
+  // Auto step B: Wizard.php?CompanyID=...&FindedProjects=... -> open VOIP (only if token matches)
+  function startVoipFromWizardIfPossible() {
+    const u = new URL(location.href);
+    if (!/\/nihul\/Wizard\.php$/i.test(u.pathname)) return;
+
+    const cid = u.searchParams.get("CompanyID");
+    const pid = u.searchParams.get("FindedProjects");
+    if (cid && pid && hasValidVoipFlowToken(pid)) {
+      openVoipInNewTab(cid, pid);
+    }
+  }
+
+  // Hotkey Ctrl+Shift+V
   document.addEventListener("keydown", async (e) => {
     if (e.ctrlKey && e.shiftKey && (e.key === "V" || e.key === "v")) {
       e.preventDefault();
@@ -938,7 +949,7 @@
     }
   }, true);
 
-  // Auto popup only from flow token
+  // VOIP Settings page: show popup only when token matches (one-time)
   if (/\/nihul\/VoIP\/Settings\.php$/i.test(location.pathname)) {
     const u = new URL(location.href);
     const currentPid = u.searchParams.get("ProjectID");
@@ -947,9 +958,9 @@
     }
   }
 
-  /* -----------------------------
+  /* =============================
      TOOL 2: Extension finder
-  ------------------------------ */
+  ============================== */
   const collectProjectIdsFromPage = () => {
     const ids = new Set();
     document.querySelectorAll("[onclick], a[href]").forEach(el => {
@@ -1175,12 +1186,12 @@
     }
   }
 
-  /* -----------------------------
+  /* =============================
      TOOL 3: Password Finder
-  ------------------------------ */
-  function savePwReq(obj) { try { Store.setItem(PW_STORAGE_KEY, JSON.stringify(obj)); } catch {} }
-  function loadPwReq() { try { const raw = Store.getItem(PW_STORAGE_KEY); return raw ? JSON.parse(raw) : null; } catch { return null; } }
-  function clearPwReq() { Store.removeItem(PW_STORAGE_KEY); }
+  ============================== */
+  function savePwReq(obj) { Store.set(PW_STORAGE_KEY, obj); }
+  function loadPwReq() { return Store.get(PW_STORAGE_KEY, null); }
+  function clearPwReq() { Store.remove(PW_STORAGE_KEY); }
 
   function openInterfacesTab(projectIdP, password) {
     const id = projectNum(projectIdP);
@@ -1236,9 +1247,9 @@
     clearPwReq();
   }
 
-  /* -----------------------------
+  /* =============================
      Hotkeys
-  ------------------------------ */
+  ============================== */
   window.addEventListener("keydown", (e) => {
     const tag = e.target?.tagName?.toLowerCase() || "";
     if (tag === "input" || tag === "textarea") return;
@@ -1249,10 +1260,14 @@
     }
   }, true);
 
-  /* -----------------------------
+  /* =============================
      Boot
-  ------------------------------ */
+  ============================== */
+  applyDevClass();
   ensureDashButton();
+
   runPasswordSearchIfOnInterfaces();
+  autoContinueFromWizardIfNeeded();
+  startVoipFromWizardIfPossible();
 
 })();
