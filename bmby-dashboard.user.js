@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         BMBY – Link Telephony Dashboard 2.1 (VOIP + Ext + Password) + DEV Toggle
+// @name         BMBY – Link Telephony Dashboard
 // @namespace    bmby-link-telephony-dashboard
-// @version      2.1.0
-// @description  Dashboard עם 3 כלים + היסטוריות פר-כלי. גרירה לכפתור ולדשבורד. ניקוי מנקה גם שדות קלט + היסטוריה/טוקנים. דיפולט במרכז. כולל DEV MODE עם כפתור ON/OFF וצבע שונה.
+// @version      1.1.1
+// @description  VOIP + Extension + Password dashboard with history and DEV mode
 // @match        https://bmby.com/nihul/*
 // @match        https://www.bmby.com/nihul/*
 // @match        https://bmby.com/*
@@ -11,7 +11,12 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_deleteValue
+
+// 🔁 AUTO UPDATE (חובה בתוך הבלוק)
+// @updateURL    https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
+// @downloadURL  https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
 // ==/UserScript==
+
 
 (() => {
   "use strict";
