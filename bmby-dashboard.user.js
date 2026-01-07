@@ -12,7 +12,7 @@
 // @grant        GM_setValue
 // @grant        GM_deleteValue
 
-// AUTO UPDATE (1must be inside UserScript block)
+// AUTO UPDATE (must be inside UserScript block)
 // @updateURL    https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
 // @downloadURL  https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
 // ==/UserScript==
