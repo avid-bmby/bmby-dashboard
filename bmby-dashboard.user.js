@@ -1,5 +1,5 @@
 // @downloadURL  https://raw.githubusercontent.com/<avid-bmby>/<bmby-dashboard>/main/bmby-dashboard.user.js
-// @updateURL    https://raw.githubusercontent.com/<<avid-bmby>/<bmby-dashboard>/main/bmby-dashboard.user.js
+// @updateURL    https://raw.githubusercontent.com/<avid-bmby>/<bmby-dashboard>/main/bmby-dashboard.user.js
 // ==UserScript==
 // @name         BMBY – Link Telephony Dashboard (VOIP + Ext + Password) – Perfect v6 (Wizard TD Click Flow + History)
 // @namespace    bmby-link-telephony-dashboard
