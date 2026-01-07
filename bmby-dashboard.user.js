@@ -12,7 +12,7 @@
 // @grant        GM_setValue
 // @grant        GM_deleteValue
 
-// 🔁 AUTO UPDATE (חובה בתוך הבלוק)
+// AUTO UPDATE (חובה בתוך הבלוק)
 // @updateURL    https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
 // @downloadURL  https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
 // ==/UserScript==
