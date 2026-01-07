@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BMBY – Link Telephony Dashboard
 // @namespace    bmby-link-telephony-dashboard
-// @version      1.1.2
+// @version      1.1.3
 // @description  VOIP + Extension + Password dashboard with history and DEV mode
 // @match        https://bmby.com/nihul/*
 // @match        https://www.bmby.com/nihul/*
