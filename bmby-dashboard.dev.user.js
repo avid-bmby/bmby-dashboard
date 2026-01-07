@@ -2,16 +2,17 @@
 // @name         BMBY – Link Telephony Dashboard (DEV)
 // @namespace    bmby-link-telephony-dashboard-dev
 // @version      0.0.1-dev
-// @description  DEV version – safe testing environment
+// @description  DEV only – safe testing
 // @match        https://bmby.com/nihul/*
 // @match        https://www.bmby.com/nihul/*
 // @run-at       document-end
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_deleteValue
-// @updateURL    https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/dev/bmby-dashboard.dev.user.js
-// @downloadURL  https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/dev/bmby-dashboard.dev.user.js
+// @updateURL    https://cdn.jsdelivr.net/gh/avid-bmby/bmby-dashboard@dev/bmby-dashboard.dev.user.js
+// @downloadURL  https://cdn.jsdelivr.net/gh/avid-bmby/bmby-dashboard@dev/bmby-dashboard.dev.user.js
 // ==/UserScript==
+
 
 
 (() => {
