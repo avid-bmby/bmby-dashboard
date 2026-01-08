@@ -1,103 +1,70 @@
 // ==UserScript==
 // @name         BMBY – Link Telephony Dashboard (DEV)
 // @namespace    bmby-link-telephony-dashboard-dev
-// @version      0.0.1-dev
-// @description  DEV only – safe testing
+// @version      0.1.0-dev.1
+// @description  DEV: Dashboard עם טאבים בעברית + 3 כלים. VOIP מציג תוצאה סופית בלבד (בלי פתיחת מסכי ביניים) באמצעות fetch. היסטוריות פר-כלי. גרירה לכפתור ולדשבורד.
 // @match        https://bmby.com/nihul/*
 // @match        https://www.bmby.com/nihul/*
+// @match        https://bmby.com/*
+// @match        https://www.bmby.com/*
 // @run-at       document-end
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_deleteValue
-// @updateURL    https://cdn.jsdelivr.net/gh/avid-bmby/bmby-dashboard@dev/bmby-dashboard.dev.user.js
-// @downloadURL  https://cdn.jsdelivr.net/gh/avid-bmby/bmby-dashboard@dev/bmby-dashboard.dev.user.js
 // ==/UserScript==
-
-
 
 (() => {
   "use strict";
 
-  /* =============================
-     DEV MODE (UI toggle + styling)
-     - Stored in localStorage => only YOUR browser/profile is affected
-  ============================== */
-  const DEV_KEY = "BMBY_DEV_MODE";
-  const isDev = () => localStorage.getItem(DEV_KEY) === "1";
-  const setDev = (on) => on ? localStorage.setItem(DEV_KEY, "1") : localStorage.removeItem(DEV_KEY);
-  const toggleDev = () => setDev(!isDev());
-
-  const applyDevClass = () => {
-    document.documentElement.classList.toggle("bmby-dev-mode", isDev());
-  };
-
-  /* =============================
-     Unified Storage (GM preferred) - SAFE for objects/arrays
-     - GM_* stores native values
-     - localStorage stores JSON strings
-  ============================== */
+  /***********************
+   * Storage (GM preferred)
+   ***********************/
   const HasGM = typeof GM_getValue === "function" && typeof GM_setValue === "function";
-
   const Store = {
-    get(k, fallback = null) {
-      try {
-        if (HasGM) return GM_getValue(k, fallback);
-        const raw = localStorage.getItem(k);
-        if (raw == null) return fallback;
-        try { return JSON.parse(raw); } catch { return raw; }
-      } catch {
-        return fallback;
-      }
+    getItem(k) {
+      try { return HasGM ? GM_getValue(k, null) : localStorage.getItem(k); } catch { return null; }
     },
-    set(k, v) {
-      try {
-        if (HasGM) return GM_setValue(k, v);
-        return localStorage.setItem(k, JSON.stringify(v));
-      } catch {}
+    setItem(k, v) {
+      try { return HasGM ? GM_setValue(k, v) : localStorage.setItem(k, v); } catch {}
     },
-    remove(k) {
-      try {
-        if (HasGM && typeof GM_deleteValue === "function") return GM_deleteValue(k);
-        return localStorage.removeItem(k);
-      } catch {}
+    removeItem(k) {
+      try { return HasGM ? GM_deleteValue(k) : localStorage.removeItem(k); } catch {}
     }
   };
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  /* =============================
-     Constants / Keys
-  ============================== */
+  /***********************
+   * Keys / constants
+   ***********************/
   const DASH_BTN_ID = "bmby-dash-btn";
   const DASH_ID = "bmby-dash";
   const DASH_HDR_ID = "bmby-dash-hdr";
   const DASH_BACKDROP_ID = "bmby-dash-backdrop";
 
-  const POS_BTN_KEY = "bmby_dash_btn_pos_v1";
-  const POS_DASH_KEY = "bmby_dash_pos_v1";
+  const POS_BTN_KEY = "bmby_dash_btn_pos_v2_dev";
+  const POS_DASH_KEY = "bmby_dash_pos_v2_dev";
 
   const HIST_MAX = 10;
   const HIST_KEYS = {
-    voip: "bmby_hist_voip_v1",
-    ext:  "bmby_hist_ext_v1",
-    pw:   "bmby_hist_pw_v1",
+    voip: "bmby_hist_voip_v2_dev",
+    ext:  "bmby_hist_ext_v2_dev",
+    pw:   "bmby_hist_pw_v2_dev",
   };
 
-  // VOIP flow token (prevents loops; allows automation only when initiated)
-  const VOIP_FLOW_KEY = "bmby_voip_popup_ctx";
-  const VOIP_FLOW_TTL = 60_000;
-
-  // PW flow data
-  const PW_STORAGE_KEY = "bmby_pw_req_v42";
+  const PW_STORAGE_KEY = "bmby_pw_req_v43_dev";
 
   const VOIP_SETTINGS_PATH = "/nihul/VoIP/Settings.php";
   const WIZARD_PATH = "/nihul/Wizard.php";
   const INTERFACES_URL_TEMPLATE = "/nihul/GridRemoteSite.php?ProjectID={id}";
   const VOIP_EXT_POST_PATH = "/nihul/VoIP/SettingsExt.php";
 
-  /* =============================
-     Helpers
-  ============================== */
+  const DEV_BADGE_KEY = "bmby_dev_badge_on_v1";
+  const COMPACT_KEY = "bmby_dash_compact_v1";
+
+  /***********************
+   * UI helpers
+   ***********************/
   const toast = (msg, ok = true) => {
     const d = document.createElement("div");
     d.textContent = msg;
@@ -121,7 +88,8 @@
         ta.style.position = "fixed";
         ta.style.left = "-9999px";
         document.body.appendChild(ta);
-        ta.focus(); ta.select();
+        ta.focus();
+        ta.select();
         const ok = document.execCommand("copy");
         ta.remove();
         return ok;
@@ -153,16 +121,17 @@
       .replaceAll("'", "&#039;");
   }
 
-  /* =============================
-     History (GM/localStorage safe)
-  ============================== */
+  /***********************
+   * History (per feature)
+   ***********************/
   function normalizeHistoryArray(raw) {
     const out = [];
     if (!Array.isArray(raw)) return out;
 
     for (const item of raw) {
-      if (typeof item === "string") out.push({ value: item, ts: Date.now() });
-      else if (item && typeof item === "object") {
+      if (typeof item === "string") {
+        out.push({ value: item, ts: Date.now() });
+      } else if (item && typeof item === "object") {
         const value = item.value ?? item.v ?? item.pid ?? item.ext ?? item.pw;
         const ts = item.ts ?? item.t ?? item.time ?? item.date;
         if (value != null) out.push({ value: String(value), ts: Number(ts) || Date.now() });
@@ -174,33 +143,33 @@
   function pushHistory(type, value) {
     const key = HIST_KEYS[type];
     if (!key) return;
-
-    const raw = Store.get(key, []);
-    const arr = normalizeHistoryArray(raw);
-
-    const e = { value: String(value), ts: Date.now() };
-    const next = [e, ...arr.filter(x => String(x.value) !== String(e.value))].slice(0, HIST_MAX);
-
-    Store.set(key, next);
+    try {
+      const raw = Store.getItem(key);
+      const arr = normalizeHistoryArray(raw ? JSON.parse(raw) : []);
+      const e = { value: String(value), ts: Date.now() };
+      const next = [e, ...arr.filter(x => String(x.value) !== String(e.value))].slice(0, HIST_MAX);
+      Store.setItem(key, JSON.stringify(next));
+    } catch {}
   }
 
   function getHistory(type) {
     const key = HIST_KEYS[type];
     if (!key) return [];
-
-    const raw = Store.get(key, []);
-    const arr = normalizeHistoryArray(raw).slice(0, HIST_MAX);
-    Store.set(key, arr); // sanitize
-    return arr;
+    try {
+      const raw = Store.getItem(key);
+      const arr = normalizeHistoryArray(raw ? JSON.parse(raw) : []);
+      Store.setItem(key, JSON.stringify(arr.slice(0, HIST_MAX)));
+      return arr.slice(0, HIST_MAX);
+    } catch { return []; }
   }
 
   function clearAllHistory() {
-    Object.values(HIST_KEYS).forEach(k => Store.remove(k));
+    Object.values(HIST_KEYS).forEach(k => Store.removeItem(k));
   }
 
-  /* =============================
-     Draggable (fixed)
-  ============================== */
+  /***********************
+   * Draggable (fixed)
+   ***********************/
   function makeDraggableFixed(el, handle, posKey, {
     zIndex = 2147483646,
     allowInteractive = false,
@@ -208,8 +177,12 @@
   } = {}) {
     const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 
-    const loadPos = () => Store.get(posKey, null);
-    const savePos = (pos) => Store.set(posKey, pos);
+    const loadPos = () => {
+      try { const raw = Store.getItem(posKey); return raw ? JSON.parse(raw) : null; } catch { return null; }
+    };
+    const savePos = (pos) => {
+      try { Store.setItem(posKey, JSON.stringify(pos)); } catch {}
+    };
 
     el.style.setProperty("position", "fixed", "important");
     el.style.setProperty("z-index", String(zIndex), "important");
@@ -326,28 +299,23 @@
   }
 
   function hasSavedPos(key) {
-    const obj = Store.get(key, null);
-    return !!(obj && typeof obj.x === "number" && typeof obj.y === "number");
+    try {
+      const raw = Store.getItem(key);
+      if (!raw) return false;
+      const obj = JSON.parse(raw);
+      return obj && typeof obj.x === "number" && typeof obj.y === "number";
+    } catch { return false; }
   }
 
-  /* =============================
-     Styles
-  ============================== */
+  /***********************
+   * Styles
+   ***********************/
   function ensureStyles() {
-    if (document.getElementById("bmby-dash-style")) return;
+    if (document.getElementById("bmby-dash-style-dev")) return;
     const s = document.createElement("style");
-    s.id = "bmby-dash-style";
+    s.id = "bmby-dash-style-dev";
     s.textContent = `
-      /* DEV mode: clear visual indicator */
-      .bmby-dev-mode #${DASH_ID}{
-        box-shadow:0 16px 55px rgba(255,120,0,.35) !important;
-        outline:3px solid rgba(255,140,0,.75) !important;
-      }
-      .bmby-dev-mode #${DASH_BTN_ID}{
-        background:#ff8c00 !important;
-        color:#111 !important;
-      }
-
+      :root.bmby-dev-outline { outline:4px solid orange; outline-offset:-4px; }
       #${DASH_BTN_ID}{
         position:fixed;right:16px;bottom:16px;
         border:0;border-radius:999px;
@@ -360,6 +328,7 @@
         user-select:none;
         touch-action:none;
       }
+      #${DASH_BTN_ID}.dev{ background:#ff8a00;color:#111; }
 
       #${DASH_BACKDROP_ID}{
         position:fixed;inset:0;
@@ -372,8 +341,8 @@
       }
 
       #${DASH_ID}{
-        width:460px;
-        max-width:92vw;
+        width:520px;
+        max-width:94vw;
         background:#111;
         color:#fff;
         border-radius:14px;
@@ -382,20 +351,33 @@
         font:13px Arial;
       }
 
+      #${DASH_ID}.compact .bmby-card{ padding:8px; }
+      #${DASH_ID}.compact .bmby-card .desc{ display:none; }
+      #${DASH_ID}.compact .bmby-mini{ display:none; }
+      #${DASH_ID}.compact .bmby-row{ margin-top:8px; }
+
       #${DASH_HDR_ID}{
         display:flex;
         align-items:center;
         justify-content:space-between;
-        padding:12px 12px;
+        padding:10px 12px;
         background:rgba(255,255,255,.06);
         border-bottom:1px solid rgba(255,255,255,.08);
         user-select:none;
         touch-action:none;
         cursor:grab;
+        gap:10px;
       }
 
-      .bmby-dash-title{ font-weight:900; letter-spacing:.2px; user-select:none; }
-      .bmby-dash-actions{ display:flex;gap:8px;align-items:center; }
+      .bmby-dash-title{
+        font-weight:900;
+        letter-spacing:.2px;
+        user-select:none;
+        touch-action:none;
+        white-space:nowrap;
+      }
+
+      .bmby-dash-actions{ display:flex;gap:8px;align-items:center; flex:0 0 auto; }
 
       .bmby-dash-iconbtn{
         border:0;
@@ -407,6 +389,35 @@
         font-weight:800;
       }
       .bmby-dash-iconbtn:hover{ background:rgba(255,255,255,.16); }
+
+      .bmby-tabs{
+        display:flex;
+        gap:6px;
+        flex:1 1 auto;
+        align-items:center;
+        overflow:auto;
+        padding:4px 2px;
+      }
+      .bmby-tab{
+        border:0;
+        border-radius:999px;
+        padding:7px 10px;
+        font-weight:900;
+        cursor:pointer;
+        background:rgba(255,255,255,.08);
+        color:#fff;
+        white-space:nowrap;
+      }
+      .bmby-tab.active{ background:#fff; color:#111; }
+      .bmby-search{
+        flex:0 0 160px;
+        max-width:30vw;
+        padding:7px 10px;
+        border-radius:999px;
+        border:0;
+        outline:none;
+        font-size:13px;
+      }
 
       .bmby-dash-body{ padding:12px; display:flex; flex-direction:column; gap:10px; }
 
@@ -464,503 +475,211 @@
       }
       .bmby-history .item:last-child{ border-bottom:0; }
       .bmby-history .item:hover{ background:rgba(255,255,255,.06); }
-      .bmby-history .v{ opacity:.88; font-size:12px; }
-      .bmby-history .time{ opacity:.6; font-size:11px; white-space:nowrap; }
+      .bmby-history .item .v{ opacity:.88; font-size:12px; }
+      .bmby-history .item .time{ opacity:.6; font-size:11px; white-space:nowrap; }
+
+      .bmby-overlay{
+        position:fixed; inset:0;
+        background:rgba(0,0,0,.35);
+        z-index:2147483646;
+        display:none;
+        align-items:center;
+        justify-content:center;
+        padding:16px;
+      }
+      .bmby-overlay .box{
+        background:#111;
+        color:#fff;
+        border-radius:14px;
+        padding:14px 16px;
+        box-shadow:0 16px 45px rgba(0,0,0,.45);
+        width:420px;
+        max-width:92vw;
+        border:1px solid rgba(255,255,255,.10);
+      }
+      .bmby-overlay .ttl{ font-weight:900; font-size:14px; margin-bottom:6px; }
+      .bmby-overlay .sub{ opacity:.85; white-space:pre-line; line-height:1.35; }
     `;
     document.head.appendChild(s);
   }
 
-  /* =============================
-     Dashboard UI
-  ============================== */
-  function buildDashboard() {
+  /***********************
+   * DEV visual badge (toggle)
+   ***********************/
+  function isDevBadgeOn() {
+    const v = Store.getItem(DEV_BADGE_KEY);
+    return v === null ? "1" : String(v) === "1"; // default ON in DEV
+  }
+  function setDevBadgeOn(on) {
+    Store.setItem(DEV_BADGE_KEY, on ? "1" : "0");
+    applyDevVisual();
+  }
+  function applyDevVisual() {
     ensureStyles();
-    applyDevClass();
-    if (document.getElementById(DASH_BACKDROP_ID)) return;
+    const on = isDevBadgeOn();
+    document.documentElement.classList.toggle("bmby-dev-outline", on);
+    const btn = document.getElementById(DASH_BTN_ID);
+    if (btn) btn.classList.toggle("dev", on);
+  }
 
-    const bd = document.createElement("div");
-    bd.id = DASH_BACKDROP_ID;
+  function isCompact() {
+    return String(Store.getItem(COMPACT_KEY) || "0") === "1";
+  }
+  function setCompact(on) {
+    Store.setItem(COMPACT_KEY, on ? "1" : "0");
+    const panel = document.getElementById(DASH_ID);
+    if (panel) panel.classList.toggle("compact", on);
+  }
 
-    const panel = document.createElement("div");
-    panel.id = DASH_ID;
-
-    const hdr = document.createElement("div");
-    hdr.id = DASH_HDR_ID;
-
-    const title = document.createElement("div");
-    title.className = "bmby-dash-title";
-    title.textContent = isDev() ? "לינק טלפוניה (DEV)" : "לינק טלפוניה";
-
-    const actions = document.createElement("div");
-    actions.className = "bmby-dash-actions";
-
-    const devBtn = document.createElement("button");
-    devBtn.className = "bmby-dash-iconbtn";
-    devBtn.textContent = isDev() ? "DEV: ON" : "DEV: OFF";
-    devBtn.title = "מצב DEV משפיע רק על הדפדפן שלך";
-
-    const clearBtn = document.createElement("button");
-    clearBtn.className = "bmby-dash-iconbtn";
-    clearBtn.textContent = "ניקוי";
-
-    const closeAllBtn = document.createElement("button");
-    closeAllBtn.className = "bmby-dash-iconbtn";
-    closeAllBtn.textContent = "סגור הכל";
-
-    const xBtn = document.createElement("button");
-    xBtn.className = "bmby-dash-iconbtn";
-    xBtn.textContent = "✕";
-
-    actions.appendChild(devBtn);
-    actions.appendChild(clearBtn);
-    actions.appendChild(closeAllBtn);
-    actions.appendChild(xBtn);
-
-    hdr.appendChild(title);
-    hdr.appendChild(actions);
-
-    const body = document.createElement("div");
-    body.className = "bmby-dash-body";
-
-    const t1 = document.createElement("div");
-    t1.className = "bmby-card";
-    t1.innerHTML = `
-      <div class="hdr">
-        <div>
-          <div class="name">1) לינק טלפוניה</div>
-          <div class="desc">חיפוש הגדרות מרכזיה</div>
+  /***********************
+   * Overlay (for silent VOIP flow)
+   ***********************/
+  const overlay = (() => {
+    let root, titleEl, subEl;
+    const ensure = () => {
+      if (root) return;
+      root = document.createElement("div");
+      root.className = "bmby-overlay";
+      root.innerHTML = `
+        <div class="box">
+          <div class="ttl" id="bmby-ov-ttl">מחפש…</div>
+          <div class="sub" id="bmby-ov-sub"></div>
         </div>
-      </div>
-      <div class="bmby-row">
-        <input id="bmby-t1-pid" placeholder="פרויקט (9809 או P9809)" />
-        <button id="bmby-t1-run">הפעל</button>
-      </div>
-      <div class="bmby-mini">קיצור: Ctrl+Shift+V</div>
-      <div class="bmby-mini">אחרונים:</div>
-      <div id="bmby-hist-voip" class="bmby-history"></div>
-    `;
+      `;
+      document.body.appendChild(root);
+      titleEl = root.querySelector("#bmby-ov-ttl");
+      subEl = root.querySelector("#bmby-ov-sub");
+    };
+    const show = (ttl, sub="") => {
+      ensure();
+      titleEl.textContent = ttl || "מחפש…";
+      subEl.textContent = sub || "";
+      root.style.display = "flex";
+    };
+    const update = (sub="") => {
+      if (!root) return;
+      subEl.textContent = sub || "";
+    };
+    const hide = () => { if (root) root.style.display = "none"; };
+    return { show, update, hide };
+  })();
 
-    const t2 = document.createElement("div");
-    t2.className = "bmby-card";
-    t2.innerHTML = `
-      <div class="hdr">
-        <div>
-          <div class="name">2) שלוחה</div>
-          <div class="desc">איתור שלוחה בפרוייקט</div>
-        </div>
-      </div>
-      <div class="bmby-row">
-        <input id="bmby-t2-ext" placeholder="שלוחה (למשל 201)" />
-        <button id="bmby-t2-run">הפעל</button>
-      </div>
-      <div class="bmby-mini">קיצור: Ctrl+Shift+E</div>
-      <div class="bmby-mini">אחרונים:</div>
-      <div id="bmby-hist-ext" class="bmby-history"></div>
-    `;
-
-    const t3 = document.createElement("div");
-    t3.className = "bmby-card";
-    t3.innerHTML = `
-      <div class="hdr">
-        <div>
-          <div class="name">3) סיסמא</div>
-          <div class="desc">איתור ממשק עם סיסמא קיימת</div>
-        </div>
-      </div>
-      <div class="bmby-row">
-        <input id="bmby-t3-pid" placeholder="פרויקט (9809 או P9809)" />
-        <input id="bmby-t3-pw" placeholder="סיסמא" />
-      </div>
-      <div class="bmby-row" style="margin-top:8px">
-        <button id="bmby-t3-run">הפעל</button>
-      </div>
-      <div class="bmby-mini">קיצור: Alt+Shift+F</div>
-      <div class="bmby-mini">אחרונים:</div>
-      <div id="bmby-hist-pw" class="bmby-history"></div>
-      <div class="bmby-mini">פתיחה/סגירה דשבורד: Alt+Shift+D</div>
-    `;
-
-    body.appendChild(t1);
-    body.appendChild(t2);
-    body.appendChild(t3);
-
-    panel.appendChild(hdr);
-    panel.appendChild(body);
-    bd.appendChild(panel);
-    document.body.appendChild(bd);
-
-    // Close handlers
-    bd.addEventListener("click", (e) => { if (e.target === bd) closeDashboard(); });
-    xBtn.addEventListener("click", (e) => { e.preventDefault(); closeDashboard(); });
-    closeAllBtn.addEventListener("click", (e) => { e.preventDefault(); closeDashboard(); });
-
-    // DEV button
-    devBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      toggleDev();
-      applyDevClass();
-      devBtn.textContent = isDev() ? "DEV: ON" : "DEV: OFF";
-      title.textContent = isDev() ? "לינק טלפוניה (DEV)" : "לינק טלפוניה";
-      toast(isDev() ? "DEV הופעל (רק בדפדפן שלך)" : "DEV כובה", true);
-    });
-
-    // Default center if no saved position
-    if (!hasSavedPos(POS_DASH_KEY)) {
-      panel.style.left = "50%";
-      panel.style.top = "50%";
-      panel.style.right = "auto";
-      panel.style.bottom = "auto";
-      panel.style.transform = "translate(-50%, -50%)";
-    }
-
-    // Drag dashboard by header (ignore buttons)
-    makeDraggableFixed(panel, hdr, POS_DASH_KEY, {
-      zIndex: 2147483646,
-      allowInteractive: true,
-      ignoreSelector: ".bmby-dash-actions, .bmby-dash-actions *"
-    });
-
-    const t1pid = panel.querySelector("#bmby-t1-pid");
-    const t1run = panel.querySelector("#bmby-t1-run");
-    const t2ext = panel.querySelector("#bmby-t2-ext");
-    const t2run = panel.querySelector("#bmby-t2-run");
-    const t3pid = panel.querySelector("#bmby-t3-pid");
-    const t3pw  = panel.querySelector("#bmby-t3-pw");
-    const t3run = panel.querySelector("#bmby-t3-run");
-
-    function renderHistory(type, wrapId, onPick) {
-      const wrap = panel.querySelector("#" + wrapId);
-      if (!wrap) return;
-
-      const items = getHistory(type);
-      if (!items.length) {
-        wrap.innerHTML = `<div class="item" style="cursor:default"><div class="v">אין היסטוריה</div><div class="time"></div></div>`;
-        return;
-      }
-
-      wrap.innerHTML = "";
-      for (const it of items) {
-        const row = document.createElement("div");
-        row.className = "item";
-        row.innerHTML = `
-          <div class="v">${escapeHtml(it.value ?? "—")}</div>
-          <div class="time">${fmtTime(it.ts)}</div>
-        `;
-        row.addEventListener("click", () => onPick(it.value));
-        wrap.appendChild(row);
-      }
-    }
-
-    function renderHistoryPw() {
-      const wrap = panel.querySelector("#bmby-hist-pw");
-      const items = getHistory("pw");
-      if (!items.length) {
-        wrap.innerHTML = `<div class="item" style="cursor:default"><div class="v">אין היסטוריה</div><div class="time"></div></div>`;
-        return;
-      }
-
-      wrap.innerHTML = "";
-      for (const it of items) {
-        const [p, pw] = String(it.value || "").split("|");
-        const row = document.createElement("div");
-        row.className = "item";
-        row.innerHTML = `
-          <div class="v">${escapeHtml(`${p || ""} | ${pw || ""}`.trim() || "—")}</div>
-          <div class="time">${fmtTime(it.ts)}</div>
-        `;
-        row.addEventListener("click", () => {
-          t3pid.value = p || "";
-          t3pw.value = pw || "";
-          toast("הוזן לכלי 3", true);
-        });
-        wrap.appendChild(row);
-      }
-    }
-
-    function renderAllHistories() {
-      renderHistory("voip", "bmby-hist-voip", (v) => { t1pid.value = v; toast("הוזן לכלי 1", true); });
-      renderHistory("ext",  "bmby-hist-ext",  (v) => { t2ext.value = v; toast("הוזן לכלי 2", true); });
-      renderHistoryPw();
-    }
-
-    window.__bmbyRenderAllHistories = renderAllHistories;
-    renderAllHistories();
-
-    clearBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      t1pid.value = "";
-      t2ext.value = "";
-      t3pid.value = "";
-      t3pw.value = "";
-
-      clearAllHistory();
-      Store.remove(VOIP_FLOW_KEY);
-      Store.remove(PW_STORAGE_KEY);
-
-      Store.remove(POS_BTN_KEY);
-      Store.remove(POS_DASH_KEY);
-
-      renderAllHistories();
-      toast("נוקה: ערכים + היסטוריה + טוקנים + מיקומים", true);
-    });
-
-    t1run.addEventListener("click", () => {
-      const pid = normalizeProjectId(t1pid.value);
-      if (!pid) return toast("❌ מספר פרויקט לא תקין", false);
-      pushHistory("voip", pid);
-      renderAllHistories();
-      startVoipFromInput(pid);
-    });
-
-    t2run.addEventListener("click", () => {
-      const ext = String(t2ext.value || "").trim();
-      if (!/^\d+$/.test(ext)) return toast("❌ שלוחה חייבת להיות מספר", false);
-      pushHistory("ext", ext);
-      renderAllHistories();
-      runExtensionSearch(ext);
-    });
-
-    t3run.addEventListener("click", () => {
-      const pid = normalizeProjectId(t3pid.value);
-      const pw = String(t3pw.value || "").trim();
-      if (!pid) return toast("❌ מספר פרויקט לא תקין", false);
-      if (!pw) return toast("❌ חסרה סיסמא", false);
-      pushHistory("pw", `${pid}|${pw}`);
-      renderAllHistories();
-      openInterfacesTab(pid, pw);
-    });
-
-    t1pid.addEventListener("keydown", (e) => { if (e.key === "Enter") t1run.click(); });
-    t2ext.addEventListener("keydown", (e) => { if (e.key === "Enter") t2run.click(); });
-    t3pw.addEventListener("keydown", (e) => { if (e.key === "Enter") t3run.click(); });
+  /***********************
+   * TOOL 1: VOIP (silent)
+   * Goal: show final result only, no tabs, no intermediate navigation
+   ***********************/
+  function domFromHtml(html) {
+    const p = new DOMParser();
+    return p.parseFromString(String(html || ""), "text/html");
   }
 
-  function openDashboard() {
-    buildDashboard();
-    const bd = document.getElementById(DASH_BACKDROP_ID);
-    if (bd) bd.style.display = "flex";
-    window.__bmbyRenderAllHistories?.();
-  }
-  function closeDashboard() {
-    const bd = document.getElementById(DASH_BACKDROP_ID);
-    if (bd) bd.style.display = "none";
-  }
-  function toggleDashboard() {
-    const bd = document.getElementById(DASH_BACKDROP_ID);
-    if (!bd) return openDashboard();
-    const isOpen = bd.style.display !== "none";
-    bd.style.display = isOpen ? "none" : "flex";
-    if (!isOpen) window.__bmbyRenderAllHistories?.();
-  }
-
-  /* =============================
-     Floating button
-  ============================== */
-  function ensureDashButton() {
-    ensureStyles();
-    applyDevClass();
-    if (document.getElementById(DASH_BTN_ID)) return;
-
-    const btn = document.createElement("button");
-    btn.id = DASH_BTN_ID;
-    btn.textContent = "Dashboard";
-    btn.title = "Alt+Shift+D (אפשר לגרור)";
-    document.body.appendChild(btn);
-
-    makeDraggableFixed(btn, btn, POS_BTN_KEY, { zIndex: 2147483647, allowInteractive: true });
-
-    btn.addEventListener("click", (e) => {
-      toggleDashboard();
-      e.preventDefault();
-    });
-  }
-
-  /* =============================
-     TOOL 1: VOIP flow (works from anywhere, no loops)
-  ============================== */
-  const setVoipFlowToken = (pid) => Store.set(VOIP_FLOW_KEY, { pid: String(pid), ts: Date.now() });
-
-  const hasValidVoipFlowToken = (pid) => {
-    const ctx = Store.get(VOIP_FLOW_KEY, null);
-    if (!ctx) return false;
-
-    const fresh = (Date.now() - Number(ctx.ts || 0)) < VOIP_FLOW_TTL;
-    const match = pid && String(pid) === String(ctx.pid);
-
-    if (!fresh) Store.remove(VOIP_FLOW_KEY);
-    return fresh && match;
-  };
-
-  const consumeVoipTokenIfMatch = (pid) => {
-    const ok = hasValidVoipFlowToken(pid);
-    if (ok) Store.remove(VOIP_FLOW_KEY);
-    return ok;
-  };
-
-  const getByLabel = (label) => {
+  function getByLabelFromDoc(doc, label) {
     const want = (label || "").trim().toLowerCase();
-    const tds = [...document.querySelectorAll("td")];
+    const tds = [...doc.querySelectorAll("td")];
     for (let i = 0; i < tds.length; i++) {
-      const t = (tds[i].innerText || "").trim().toLowerCase();
+      const t = (tds[i].innerText || tds[i].textContent || "").trim().toLowerCase();
       if (t === want) {
         const next = tds[i + 1];
         const el = next?.querySelector("input,select,textarea");
-        return el?.value || "—";
+        // Sometimes values are plain text, not inputs
+        const text = (next?.innerText || next?.textContent || "").trim();
+        return el?.value || text || "—";
       }
     }
     return "—";
-  };
-
-  const showVoipAlertAndCopy = async () => {
-    for (let i = 0; i < 60; i++) {
-      const domain = getByLabel("domain");
-      const account = getByLabel("Account Code");
-      const partition = getByLabel("Partition");
-      if (domain !== "—" || account !== "—" || partition !== "—") {
-        const text =
-          `VOIP SETTINGS\n\n` +
-          `Domain: ${domain}\n` +
-          `Account Code: ${account}\n` +
-          `Partition: ${partition}`;
-        const copied = await copyToClipboard(account);
-        alert(text + (copied ? `\n\n✅ הועתק ללוח (Account בלבד)` : `\n\n⚠️ לא הצלחתי להעתיק ללוח`));
-        return;
-      }
-      await sleep(250);
-    }
-    alert("נכנסתי ל-VOIP Settings אבל לא מצאתי Domain/Account/Partition.");
-  };
-
-  const openVoipInNewTab = (cid, pid) => {
-    const v = new URL(location.origin + VOIP_SETTINGS_PATH);
-    v.searchParams.set("CompanyID", cid);
-    v.searchParams.set("ProjectID", pid);
-    window.open(v.toString(), "_blank", "noopener,noreferrer");
-  };
-
-  function startVoipFromInput(pidP) {
-    const pid = projectNum(pidP);
-    const u = new URL(location.href);
-
-    // If already on project page, open directly
-    if (/\/nihul\/EditProject\.php$/i.test(u.pathname)) {
-      const cid = u.searchParams.get("CompanyID");
-      const p = u.searchParams.get("ProjectID");
-      if (cid && p) { setVoipFlowToken(p); openVoipInNewTab(cid, p); return; }
-    }
-
-    // If already on Wizard with CompanyID + FindedProjects
-    if (/\/nihul\/Wizard\.php$/i.test(u.pathname)) {
-      const cid = u.searchParams.get("CompanyID");
-      const p = u.searchParams.get("FindedProjects");
-      if (cid && p) { setVoipFlowToken(p); openVoipInNewTab(cid, p); return; }
-    }
-
-    // Otherwise, go to Wizard?q=P#### (from anywhere)
-    setVoipFlowToken(pid);
-    location.href = location.origin + `${WIZARD_PATH}?q=` + encodeURIComponent("P" + pid);
   }
 
-  // Auto step A: Wizard.php?q=P#### -> click td[onclick] that matches FindedProjects=pid (only if token matches)
-  function autoContinueFromWizardIfNeeded() {
-    const u = new URL(location.href);
-    if (!/\/nihul\/Wizard\.php$/i.test(u.pathname)) return;
-    const q = u.searchParams.get("q");
-    if (!q) return;
-
-    const pid = (String(q).match(/\d+/) || [])[0];
-    if (!pid) return;
-
-    if (!hasValidVoipFlowToken(pid)) return; // prevent loops if user navigated manually
-
-    let tries = 0;
-    const timer = setInterval(() => {
-      tries++;
-      const tds = [...document.querySelectorAll("td[onclick]")];
-      const td = tds.find(x => {
-        const oc = x.getAttribute("onclick") || "";
-        return oc.includes("Wizard.php") && oc.includes("CompanyID=") && oc.includes("FindedProjects=" + pid);
-      });
-
-      if (td) {
-        clearInterval(timer);
-        td.click();
-      } else if (tries > 60) {
-        clearInterval(timer);
-        toast("לא מצאתי שורת Wizard מתאימה (אולי אין הרשאה/אין תוצאות).", false);
-      }
-    }, 250);
+  async function fetchText(url) {
+    const res = await fetch(url, { method: "GET", credentials: "include" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.text();
   }
 
-  // Auto step B: Wizard.php?CompanyID=...&FindedProjects=... -> open VOIP (only if token matches)
-  function startVoipFromWizardIfPossible() {
-    const u = new URL(location.href);
-    if (!/\/nihul\/Wizard\.php$/i.test(u.pathname)) return;
-
-    const cid = u.searchParams.get("CompanyID");
-    const pid = u.searchParams.get("FindedProjects");
-    if (cid && pid && hasValidVoipFlowToken(pid)) {
-      openVoipInNewTab(cid, pid);
+  function extractCidFromWizardHtml(html, numericPid) {
+    // Look for CompanyID=... and FindedProjects=<pid> in onclick/href
+    const re = /CompanyID=(\d+)[^'"]*FindedProjects=(\d+)/ig;
+    let m;
+    while ((m = re.exec(html)) !== null) {
+      const cid = m[1];
+      const pid = m[2];
+      if (String(pid) === String(numericPid)) return cid;
     }
+    // fallback: any CompanyID in page
+    const m2 = html.match(/CompanyID=(\d+)/i);
+    return m2 ? m2[1] : null;
   }
 
-  // Hotkey Ctrl+Shift+V
-  document.addEventListener("keydown", async (e) => {
-    if (e.ctrlKey && e.shiftKey && (e.key === "V" || e.key === "v")) {
-      e.preventDefault();
+  async function runVoipSilent(pidP) {
+    const pidNorm = normalizeProjectId(pidP);
+    if (!pidNorm) { toast("❌ מספר פרויקט לא תקין", false); return; }
+    const pid = projectNum(pidNorm);
 
+    overlay.show("מחפש VOIP…", `פרויקט: ${pidNorm}\n(ללא פתיחת מסכי ביניים)`);
+
+    try {
+      // If currently on EditProject and has CompanyID/ProjectID, we can avoid wizard fetch
       const u = new URL(location.href);
-
-      if (/\/nihul\/VoIP\/Settings\.php$/i.test(u.pathname)) {
-        await showVoipAlertAndCopy();
-        return;
-      }
+      let cid = null;
 
       if (/\/nihul\/EditProject\.php$/i.test(u.pathname)) {
-        const cid = u.searchParams.get("CompanyID");
-        const pid = u.searchParams.get("ProjectID");
-        if (!cid || !pid) return;
-        setVoipFlowToken(pid);
-        pushHistory("voip", "P" + pid);
-        window.__bmbyRenderAllHistories?.();
-        openVoipInNewTab(cid, pid);
+        const cid0 = u.searchParams.get("CompanyID");
+        const pid0 = u.searchParams.get("ProjectID");
+        if (cid0 && pid0 && String(pid0) === String(pid)) cid = cid0;
+      }
+
+      if (!cid) {
+        overlay.update("מאתר CompanyID דרך Wizard…");
+        const wizUrl = new URL(location.origin + WIZARD_PATH);
+        wizUrl.searchParams.set("q", "P" + pid);
+        const wizHtml = await fetchText(wizUrl.toString());
+        cid = extractCidFromWizardHtml(wizHtml, pid);
+      }
+
+      if (!cid) {
+        toast("❌ לא הצלחתי לאתר CompanyID (בדוק שהפרויקט קיים והרשאות)", false);
         return;
       }
 
-      if (/\/nihul\/Wizard\.php$/i.test(u.pathname)) {
-        const cid = u.searchParams.get("CompanyID");
-        const pid = u.searchParams.get("FindedProjects");
-        if (cid && pid) {
-          setVoipFlowToken(pid);
-          pushHistory("voip", "P" + pid);
-          window.__bmbyRenderAllHistories?.();
-          openVoipInNewTab(cid, pid);
-          return;
-        }
+      overlay.update(`נמצא CompanyID: ${cid}\nטוען VOIP Settings…`);
+
+      const voipUrl = new URL(location.origin + VOIP_SETTINGS_PATH);
+      voipUrl.searchParams.set("CompanyID", cid);
+      voipUrl.searchParams.set("ProjectID", pid);
+
+      const voipHtml = await fetchText(voipUrl.toString());
+      const doc = domFromHtml(voipHtml);
+
+      const domain = getByLabelFromDoc(doc, "domain");
+      const account = getByLabelFromDoc(doc, "Account Code");
+      const partition = getByLabelFromDoc(doc, "Partition");
+
+      if (domain === "—" && account === "—" && partition === "—") {
+        toast("❌ נטען VOIP Settings אבל לא זוהו Domain/Account/Partition", false);
+        return;
       }
 
-      const q = prompt("הכנס חיפוש (למשל P9681 או 9681)");
-      if (!q) return;
-      const pidP = normalizeProjectId(q);
-      if (!pidP) { alert("לא זוהה מספר פרויקט"); return; }
-      pushHistory("voip", pidP);
-      window.__bmbyRenderAllHistories?.();
-      startVoipFromInput(pidP);
-    }
-  }, true);
+      const text =
+        `VOIP SETTINGS\n\n` +
+        `Project: P${pid}\n` +
+        `CompanyID: ${cid}\n\n` +
+        `Domain: ${domain}\n` +
+        `Account Code: ${account}\n` +
+        `Partition: ${partition}`;
 
-  // VOIP Settings page: show popup only when token matches (one-time)
-  if (/\/nihul\/VoIP\/Settings\.php$/i.test(location.pathname)) {
-    const u = new URL(location.href);
-    const currentPid = u.searchParams.get("ProjectID");
-    if (consumeVoipTokenIfMatch(currentPid)) {
-      setTimeout(() => { showVoipAlertAndCopy(); }, 400);
+      const copied = await copyToClipboard(account);
+      alert(text + (copied ? `\n\n✅ הועתק ללוח (Account בלבד)` : `\n\n⚠️ לא הצלחתי להעתיק ללוח`));
+      toast("✅ VOIP מוכן", true);
+    } catch (e) {
+      console.error(e);
+      toast("❌ שגיאה ב-VOIP (ייתכן חסימה/timeout)", false);
+    } finally {
+      overlay.hide();
     }
   }
 
-  /* =============================
-     TOOL 2: Extension finder
-  ============================== */
+  /***********************
+   * TOOL 2: Extension finder (unchanged)
+   ***********************/
   const collectProjectIdsFromPage = () => {
     const ids = new Set();
     document.querySelectorAll("[onclick], a[href]").forEach(el => {
@@ -1186,12 +905,12 @@
     }
   }
 
-  /* =============================
-     TOOL 3: Password Finder
-  ============================== */
-  function savePwReq(obj) { Store.set(PW_STORAGE_KEY, obj); }
-  function loadPwReq() { return Store.get(PW_STORAGE_KEY, null); }
-  function clearPwReq() { Store.remove(PW_STORAGE_KEY); }
+  /***********************
+   * TOOL 3: Password Finder (unchanged)
+   ***********************/
+  function savePwReq(obj) { try { Store.setItem(PW_STORAGE_KEY, JSON.stringify(obj)); } catch {} }
+  function loadPwReq() { try { const raw = Store.getItem(PW_STORAGE_KEY); return raw ? JSON.parse(raw) : null; } catch { return null; } }
+  function clearPwReq() { Store.removeItem(PW_STORAGE_KEY); }
 
   function openInterfacesTab(projectIdP, password) {
     const id = projectNum(projectIdP);
@@ -1247,9 +966,439 @@
     clearPwReq();
   }
 
-  /* =============================
-     Hotkeys
-  ============================== */
+  /***********************
+   * Dashboard UI (Tabs)
+   ***********************/
+  function buildDashboard() {
+    ensureStyles();
+    if (document.getElementById(DASH_BACKDROP_ID)) return;
+
+    const bd = document.createElement("div");
+    bd.id = DASH_BACKDROP_ID;
+
+    const panel = document.createElement("div");
+    panel.id = DASH_ID;
+    panel.classList.toggle("compact", isCompact());
+
+    const hdr = document.createElement("div");
+    hdr.id = DASH_HDR_ID;
+
+    const title = document.createElement("div");
+    title.className = "bmby-dash-title";
+    title.textContent = "לינק טלפוניה (DEV)";
+
+    const tabsWrap = document.createElement("div");
+    tabsWrap.className = "bmby-tabs";
+
+    const search = document.createElement("input");
+    search.className = "bmby-search";
+    search.placeholder = "חיפוש כלי…";
+
+    const actions = document.createElement("div");
+    actions.className = "bmby-dash-actions";
+
+    const compactBtn = document.createElement("button");
+    compactBtn.className = "bmby-dash-iconbtn";
+    compactBtn.textContent = isCompact() ? "רגיל" : "קומפקטי";
+
+    const devBadgeBtn = document.createElement("button");
+    devBadgeBtn.className = "bmby-dash-iconbtn";
+    devBadgeBtn.textContent = isDevBadgeOn() ? "DEV: ON" : "DEV: OFF";
+
+    const clearBtn = document.createElement("button");
+    clearBtn.className = "bmby-dash-iconbtn";
+    clearBtn.textContent = "ניקוי";
+
+    const xBtn = document.createElement("button");
+    xBtn.className = "bmby-dash-iconbtn";
+    xBtn.textContent = "✕";
+
+    actions.appendChild(compactBtn);
+    actions.appendChild(devBadgeBtn);
+    actions.appendChild(clearBtn);
+    actions.appendChild(xBtn);
+
+    hdr.appendChild(title);
+    hdr.appendChild(tabsWrap);
+    hdr.appendChild(search);
+    hdr.appendChild(actions);
+
+    const body = document.createElement("div");
+    body.className = "bmby-dash-body";
+
+    panel.appendChild(hdr);
+    panel.appendChild(body);
+    bd.appendChild(panel);
+    document.body.appendChild(bd);
+
+    // Default center if no saved position
+    if (!hasSavedPos(POS_DASH_KEY)) {
+      panel.style.left = "50%";
+      panel.style.top = "50%";
+      panel.style.right = "auto";
+      panel.style.bottom = "auto";
+      panel.style.transform = "translate(-50%, -50%)";
+    }
+
+    makeDraggableFixed(panel, hdr, POS_DASH_KEY, {
+      zIndex: 2147483646,
+      allowInteractive: true,
+      ignoreSelector: ".bmby-dash-actions, .bmby-dash-actions *, .bmby-tabs, .bmby-tabs *, .bmby-search"
+    });
+
+    // Backdrop close
+    bd.addEventListener("click", (e) => { if (e.target === bd) closeDashboard(); });
+    xBtn.addEventListener("click", (e) => { e.preventDefault(); closeDashboard(); });
+
+    compactBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      const next = !isCompact();
+      setCompact(next);
+      compactBtn.textContent = next ? "רגיל" : "קומפקטי";
+    });
+
+    devBadgeBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      const next = !isDevBadgeOn();
+      setDevBadgeOn(next);
+      devBadgeBtn.textContent = next ? "DEV: ON" : "DEV: OFF";
+    });
+
+    /***************
+     * Tools registry
+     ***************/
+    const tabs = [
+      { id: "telephony", label: "טלפוניה" },
+      { id: "projects", label: "פרויקטים" },
+      { id: "security", label: "אבטחה" },
+      { id: "tools", label: "כלים" },
+    ];
+
+    const tools = [
+      {
+        id: "voip",
+        tab: "telephony",
+        title: "1) לינק טלפוניה",
+        desc: "חיפוש הגדרות מרכזיה (תוצאה סופית בלבד)",
+        hotkey: "Ctrl+Shift+V",
+        render(container) {
+          container.innerHTML = `
+            <div class="bmby-card" data-tool="voip">
+              <div class="hdr">
+                <div>
+                  <div class="name">1) לינק טלפוניה</div>
+                  <div class="desc">חיפוש VOIP – מציג תוצאה סופית בלבד (ללא פתיחת מסכי ביניים)</div>
+                </div>
+              </div>
+              <div class="bmby-row">
+                <input id="bmby-t1-pid" placeholder="פרויקט (9809 או P9809)" />
+                <button id="bmby-t1-run">הפעל</button>
+              </div>
+              <div class="bmby-mini">קיצור: Ctrl+Shift+V</div>
+              <div class="bmby-mini">אחרונים:</div>
+              <div id="bmby-hist-voip" class="bmby-history"></div>
+            </div>
+          `;
+          const t1pid = container.querySelector("#bmby-t1-pid");
+          const t1run = container.querySelector("#bmby-t1-run");
+
+          t1run.addEventListener("click", async () => {
+            const pid = normalizeProjectId(t1pid.value);
+            if (!pid) return toast("❌ מספר פרויקט לא תקין", false);
+            pushHistory("voip", pid);
+            renderAllHistories();
+            await runVoipSilent(pid);
+          });
+
+          t1pid.addEventListener("keydown", (e) => { if (e.key === "Enter") t1run.click(); });
+        }
+      },
+      {
+        id: "ext",
+        tab: "projects",
+        title: "2) שלוחה",
+        desc: "איתור שלוחה בפרויקטים בעמוד הנוכחי",
+        hotkey: "Ctrl+Shift+E",
+        render(container) {
+          container.innerHTML = `
+            <div class="bmby-card" data-tool="ext">
+              <div class="hdr">
+                <div>
+                  <div class="name">2) שלוחה</div>
+                  <div class="desc">איתור שלוחה בפרוייקט (דורש עמוד עם רשימת פרויקטים)</div>
+                </div>
+              </div>
+              <div class="bmby-row">
+                <input id="bmby-t2-ext" placeholder="שלוחה (למשל 201)" />
+                <button id="bmby-t2-run">הפעל</button>
+              </div>
+              <div class="bmby-mini">קיצור: Ctrl+Shift+E</div>
+              <div class="bmby-mini">אחרונים:</div>
+              <div id="bmby-hist-ext" class="bmby-history"></div>
+            </div>
+          `;
+          const t2ext = container.querySelector("#bmby-t2-ext");
+          const t2run = container.querySelector("#bmby-t2-run");
+
+          t2run.addEventListener("click", () => {
+            const ext = String(t2ext.value || "").trim();
+            if (!/^\d+$/.test(ext)) return toast("❌ שלוחה חייבת להיות מספר", false);
+            pushHistory("ext", ext);
+            renderAllHistories();
+            runExtensionSearch(ext);
+          });
+
+          t2ext.addEventListener("keydown", (e) => { if (e.key === "Enter") t2run.click(); });
+        }
+      },
+      {
+        id: "pw",
+        tab: "security",
+        title: "3) סיסמא",
+        desc: "איתור ממשק עם סיסמא קיימת",
+        hotkey: "Alt+Shift+F",
+        render(container) {
+          container.innerHTML = `
+            <div class="bmby-card" data-tool="pw">
+              <div class="hdr">
+                <div>
+                  <div class="name">3) סיסמא</div>
+                  <div class="desc">איתור ממשק עם סיסמא קיימת</div>
+                </div>
+              </div>
+              <div class="bmby-row">
+                <input id="bmby-t3-pid" placeholder="פרויקט (9809 או P9809)" />
+                <input id="bmby-t3-pw" placeholder="סיסמא" />
+              </div>
+              <div class="bmby-row" style="margin-top:8px">
+                <button id="bmby-t3-run">הפעל</button>
+              </div>
+              <div class="bmby-mini">קיצור: Alt+Shift+F</div>
+              <div class="bmby-mini">אחרונים:</div>
+              <div id="bmby-hist-pw" class="bmby-history"></div>
+              <div class="bmby-mini">פתיחה/סגירה דשבורד: Alt+Shift+D</div>
+            </div>
+          `;
+          const t3pid = container.querySelector("#bmby-t3-pid");
+          const t3pw = container.querySelector("#bmby-t3-pw");
+          const t3run = container.querySelector("#bmby-t3-run");
+
+          t3run.addEventListener("click", () => {
+            const pid = normalizeProjectId(t3pid.value);
+            const pw = String(t3pw.value || "").trim();
+            if (!pid) return toast("❌ מספר פרויקט לא תקין", false);
+            if (!pw) return toast("❌ חסרה סיסמא", false);
+            pushHistory("pw", `${pid}|${pw}`);
+            renderAllHistories();
+            openInterfacesTab(pid, pw);
+          });
+
+          t3pw.addEventListener("keydown", (e) => { if (e.key === "Enter") t3run.click(); });
+        }
+      },
+      {
+        id: "devinfo",
+        tab: "tools",
+        title: "כלי DEV",
+        desc: "כלי עזר לפיתוח",
+        hotkey: "",
+        render(container) {
+          container.innerHTML = `
+            <div class="bmby-card" data-tool="devinfo">
+              <div class="hdr">
+                <div>
+                  <div class="name">DEV</div>
+                  <div class="desc">הגדרות לפיתוח ותצוגה</div>
+                </div>
+              </div>
+              <div class="bmby-mini">
+                • DEV Outline: מסגרת כתומה כדי לא להתבלבל<br/>
+                • קומפקטי: מצמצם רווחים כשיש הרבה כלים
+              </div>
+            </div>
+          `;
+        }
+      }
+    ];
+
+    // Tabs buttons
+    let activeTabId = tabs[0].id;
+    const tabBtns = new Map();
+
+    function setActiveTab(id) {
+      activeTabId = id;
+      for (const t of tabs) {
+        tabBtns.get(t.id)?.classList.toggle("active", t.id === id);
+      }
+      renderTab();
+    }
+
+    tabsWrap.innerHTML = "";
+    for (const t of tabs) {
+      const b = document.createElement("button");
+      b.className = "bmby-tab";
+      b.textContent = t.label;
+      b.addEventListener("click", (e) => { e.preventDefault(); setActiveTab(t.id); });
+      tabsWrap.appendChild(b);
+      tabBtns.set(t.id, b);
+    }
+
+    function renderHistory(type, wrapId, onPick) {
+      const wrap = panel.querySelector("#" + wrapId);
+      if (!wrap) return;
+
+      const items = getHistory(type);
+      if (!items.length) {
+        wrap.innerHTML = `<div class="item" style="cursor:default"><div class="v">אין היסטוריה</div><div class="time"></div></div>`;
+        return;
+      }
+
+      wrap.innerHTML = "";
+      for (const it of items) {
+        const row = document.createElement("div");
+        row.className = "item";
+        row.innerHTML = `
+          <div class="v">${escapeHtml(it.value ?? "—")}</div>
+          <div class="time">${fmtTime(it.ts)}</div>
+        `;
+        row.addEventListener("click", () => onPick(it.value));
+        wrap.appendChild(row);
+      }
+    }
+
+    function renderHistoryPw() {
+      const wrap = panel.querySelector("#bmby-hist-pw");
+      if (!wrap) return;
+      const items = getHistory("pw");
+      if (!items.length) {
+        wrap.innerHTML = `<div class="item" style="cursor:default"><div class="v">אין היסטוריה</div><div class="time"></div></div>`;
+        return;
+      }
+
+      wrap.innerHTML = "";
+      for (const it of items) {
+        const [p, pw] = String(it.value || "").split("|");
+        const row = document.createElement("div");
+        row.className = "item";
+        row.innerHTML = `
+          <div class="v">${escapeHtml(`${p || ""} | ${pw || ""}`.trim() || "—")}</div>
+          <div class="time">${fmtTime(it.ts)}</div>
+        `;
+        row.addEventListener("click", () => {
+          const t3pid = panel.querySelector("#bmby-t3-pid");
+          const t3pw = panel.querySelector("#bmby-t3-pw");
+          if (t3pid) t3pid.value = p || "";
+          if (t3pw) t3pw.value = pw || "";
+          toast("הוזן לכלי 3", true);
+        });
+        wrap.appendChild(row);
+      }
+    }
+
+    function renderAllHistories() {
+      renderHistory("voip", "bmby-hist-voip", (v) => {
+        const t1pid = panel.querySelector("#bmby-t1-pid");
+        if (t1pid) t1pid.value = v;
+        toast("הוזן לכלי 1", true);
+      });
+      renderHistory("ext", "bmby-hist-ext", (v) => {
+        const t2ext = panel.querySelector("#bmby-t2-ext");
+        if (t2ext) t2ext.value = v;
+        toast("הוזן לכלי 2", true);
+      });
+      renderHistoryPw();
+    }
+    window.__bmbyRenderAllHistories = renderAllHistories;
+
+    function toolMatchesSearch(tool, q) {
+      if (!q) return true;
+      const s = String(q).trim().toLowerCase();
+      const hay = `${tool.title} ${tool.desc} ${tool.id}`.toLowerCase();
+      return hay.includes(s);
+    }
+
+    function renderTab() {
+      const q = String(search.value || "").trim().toLowerCase();
+      body.innerHTML = "";
+
+      const toolsInTab = tools.filter(t => t.tab === activeTabId).filter(t => toolMatchesSearch(t, q));
+      if (!toolsInTab.length) {
+        const empty = document.createElement("div");
+        empty.className = "bmby-card";
+        empty.innerHTML = `<div class="name">אין תוצאות</div><div class="desc">נסה לשנות חיפוש או טאבה.</div>`;
+        body.appendChild(empty);
+        return;
+      }
+
+      for (const t of toolsInTab) {
+        const slot = document.createElement("div");
+        t.render(slot);
+        body.appendChild(slot);
+      }
+      renderAllHistories();
+    }
+
+    search.addEventListener("input", () => renderTab());
+
+    clearBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      clearAllHistory();
+      Store.removeItem(PW_STORAGE_KEY);
+      Store.removeItem(POS_BTN_KEY);
+      Store.removeItem(POS_DASH_KEY);
+      renderTab();
+      toast("נוקה: היסטוריה + טוקנים + מיקומים (DEV)", true);
+    });
+
+    // Initial render
+    setActiveTab(activeTabId);
+    applyDevVisual();
+  }
+
+  function openDashboard() {
+    buildDashboard();
+    const bd = document.getElementById(DASH_BACKDROP_ID);
+    if (bd) bd.style.display = "flex";
+    window.__bmbyRenderAllHistories?.();
+  }
+  function closeDashboard() {
+    const bd = document.getElementById(DASH_BACKDROP_ID);
+    if (bd) bd.style.display = "none";
+  }
+  function toggleDashboard() {
+    const bd = document.getElementById(DASH_BACKDROP_ID);
+    if (!bd) return openDashboard();
+    const isOpen = bd.style.display !== "none";
+    bd.style.display = isOpen ? "none" : "flex";
+    if (!isOpen) window.__bmbyRenderAllHistories?.();
+  }
+
+  /***********************
+   * Floating button
+   ***********************/
+  function ensureDashButton() {
+    ensureStyles();
+    if (document.getElementById(DASH_BTN_ID)) return;
+
+    const btn = document.createElement("button");
+    btn.id = DASH_BTN_ID;
+    btn.textContent = "Dashboard";
+    btn.title = "Alt+Shift+D (אפשר לגרור)";
+    document.body.appendChild(btn);
+
+    makeDraggableFixed(btn, btn, POS_BTN_KEY, { zIndex: 2147483647, allowInteractive: true });
+    applyDevVisual();
+
+    btn.addEventListener("click", (e) => {
+      toggleDashboard();
+      e.preventDefault();
+    });
+  }
+
+  /***********************
+   * Hotkeys
+   ***********************/
+  // Dashboard toggle
   window.addEventListener("keydown", (e) => {
     const tag = e.target?.tagName?.toLowerCase() || "";
     if (tag === "input" || tag === "textarea") return;
@@ -1260,14 +1409,84 @@
     }
   }, true);
 
-  /* =============================
-     Boot
-  ============================== */
-  applyDevClass();
-  ensureDashButton();
+  // VOIP hotkey: Ctrl+Shift+V (silent result)
+  document.addEventListener("keydown", async (e) => {
+    if (e.ctrlKey && e.shiftKey && (e.key === "V" || e.key === "v")) {
+      e.preventDefault();
 
+      // If user is on VOIP Settings page and just wants manual extract, do it from current DOM
+      if (/\/nihul\/VoIP\/Settings\.php$/i.test(location.pathname)) {
+        const domain = (() => {
+          const v = (() => {
+            const want = "domain";
+            const tds = [...document.querySelectorAll("td")];
+            for (let i = 0; i < tds.length; i++) {
+              const t = (tds[i].innerText || "").trim().toLowerCase();
+              if (t === want) {
+                const next = tds[i + 1];
+                const el = next?.querySelector("input,select,textarea");
+                return el?.value || (next?.innerText || "").trim() || "—";
+              }
+            }
+            return "—";
+          })();
+          return v;
+        })();
+        const account = (() => {
+          const want = "account code";
+          const tds = [...document.querySelectorAll("td")];
+          for (let i = 0; i < tds.length; i++) {
+            const t = (tds[i].innerText || "").trim().toLowerCase();
+            if (t === want) {
+              const next = tds[i + 1];
+              const el = next?.querySelector("input,select,textarea");
+              return el?.value || (next?.innerText || "").trim() || "—";
+            }
+          }
+          return "—";
+        })();
+        const partition = (() => {
+          const want = "partition";
+          const tds = [...document.querySelectorAll("td")];
+          for (let i = 0; i < tds.length; i++) {
+            const t = (tds[i].innerText || "").trim().toLowerCase();
+            if (t === want) {
+              const next = tds[i + 1];
+              const el = next?.querySelector("input,select,textarea");
+              return el?.value || (next?.innerText || "").trim() || "—";
+            }
+          }
+          return "—";
+        })();
+
+        const text =
+          `VOIP SETTINGS\n\n` +
+          `Domain: ${domain}\n` +
+          `Account Code: ${account}\n` +
+          `Partition: ${partition}`;
+
+        const copied = await copyToClipboard(account);
+        alert(text + (copied ? `\n\n✅ הועתק ללוח (Account בלבד)` : `\n\n⚠️ לא הצלחתי להעתיק ללוח`));
+        return;
+      }
+
+      const q = prompt("הכנס חיפוש (למשל P9681 או 9681)");
+      if (!q) return;
+      const pidP = normalizeProjectId(q);
+      if (!pidP) { alert("לא זוהה מספר פרויקט"); return; }
+
+      pushHistory("voip", pidP);
+      window.__bmbyRenderAllHistories?.();
+
+      await runVoipSilent(pidP);
+    }
+  }, true);
+
+  /***********************
+   * Boot
+   ***********************/
+  ensureDashButton();
   runPasswordSearchIfOnInterfaces();
-  autoContinueFromWizardIfNeeded();
-  startVoipFromWizardIfPossible();
+  applyDevVisual();
 
 })();
