@@ -1,16 +1,13 @@
 // ==UserScript==
-// @name         BMBY – Link Telephony Dashboard
-// @namespace    bmby-link-telephony-dashboard
-// @version      1.1.4
-// @description  VOIP + Extension + Password dashboard with history + DEV toggle + GitHub auto-update
-// @match        https://bmby.com/nihul/*
+// @name         BMBY – Link Telephony Dashboard (PROD)
+// @namespace    bmby
+// @version      0.1.0
 // @match        https://www.bmby.com/nihul/*
-// @match        https://bmby.com/*
-// @match        https://www.bmby.com/*
+// @match        https://www.bmby.com/preferences/*
 // @run-at       document-end
+// @grant        GM_addStyle
 // @grant        GM_getValue
 // @grant        GM_setValue
-// @grant        GM_deleteValue
 // @updateURL    https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
 // @downloadURL  https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
 // ==/UserScript==
