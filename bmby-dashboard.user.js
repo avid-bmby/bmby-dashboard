@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BMBY – Link Telephony Dashboard
 // @namespace    bmby-link-telephony-dashboard
-// @version      0.1.0
+// @version      0.1.1
 // @description  Tabs dashboard (VOIP + Passwords + User search) for BMBY
 // @updateURL    https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
 // @downloadURL  https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
@@ -518,7 +518,7 @@ function escapeAttr(s) {
     const b = document.createElement("button");
     b.id = UI.btnId;
     b.type = "button";
-    b.textContent = "BMBY DEV";
+    b.textContent = "BMBY";
     b.addEventListener("click", toggleDashboard);
     document.body.appendChild(b);
   }
@@ -550,8 +550,7 @@ function escapeAttr(s) {
 
     dash.innerHTML = `
       <div class="bmby-header">
-        <span class="bmby-pill dev">DEV: ON</span>
-        <span class="bmby-pill">דשבורד טלפוניה (DEV)</span>
+        <span class="bmby-pill">דשבורד טלפוניה</span>
         <span style="margin-right:auto"></span>
         <button class="bmby-btn secondary" data-x="close">סגור</button>
       </div>
@@ -583,7 +582,7 @@ function escapeAttr(s) {
     const saved = Store.get("activeTab", "voip");
     setActiveTab(saved);
 
-    document.documentElement.classList.add("bmby-dev-mode");
+    // prod: no dev mode class
   }
 
   function openDashboard() {
@@ -644,7 +643,7 @@ function escapeAttr(s) {
       tabId === "extensions" ? "חיפוש שלוחות" : "בקרוב";
     return `
       <div style="font:900 14px/1.2 var(--bmby-font);">${title}</div>
-      <div class="bmby-small">בקרוב נוסיף את הפיצ׳ר הזה. כרגע DEV מתמקד ב-VOIP.</div>
+      <div class="bmby-small">בקרוב נוסיף את הפיצ׳ר הזה. כרגע הדשבורד מתמקד ב-VOIP.</div>
     `;
   }
 
@@ -690,8 +689,7 @@ function escapeAttr(s) {
 
     const req = loadPwReq();
     if (!req || !req.password) {
-      log('No pending password request in storage. Showing manual highlight button.');
-      try { ensureManualPwHighlighter(); } catch (e) { log('ensureManualPwHighlighter failed', e); }
+      log('No pending password request in storage.');
       return;
     }
     log('Pending password request found', req);
@@ -1373,7 +1371,7 @@ if (!p) p = clean(getByLabelFromDoc(doc, ["partition", "sip partition", "מחי�
     Store.set("voip_learn_template", template);
     Store.set("voip_learn_kind", ev.kind || "fetch");
     Store.set("voip_learn_last", { template, at: Date.now() });
-    toast("✅ למדתי את מקור ה-VOIP מהמערכת (יישמר ב-DEV)", "ok");
+    toast("✅ למדתי את מקור ה-VOIP מהמערכת ", "ok");
   }
 
   // Live learning: listen to network events while the user works normally
@@ -1711,7 +1709,7 @@ if (hasVal(base.domain) || hasVal(base.account) || hasVal(base.partition)) {
     function refreshLearnStatus() {
       const t = getLearnedTemplate();
       if (!learnStatus) return;
-      if (t) learnStatus.textContent = "למידת VOIP: פעילה ✅ (נלמד אוטומטית מרשת – DEV)";
+      if (t) learnStatus.textContent = "למידת VOIP: פעילה ✅";
       else learnStatus.textContent = "למידת VOIP: לא קיימת. לחץ 'בדוק VOIP מהמערכת' ואז פתח VOIP ידני פעם אחת (למשל מתפריט BMBY) כדי שאאתר את ה-API.";
     }
     refreshLearnStatus();
