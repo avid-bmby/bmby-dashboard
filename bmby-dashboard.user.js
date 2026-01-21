@@ -1,14 +1,12 @@
 // ==UserScript==
-// @name         BMBY – Link Telephony Dashboard
+// @name         BMBY Dashboard (PROD)
 // @namespace    bmby-link-telephony-dashboard
-// @version      0.1.2
-// @description  Tabs dashboard (VOIP + Passwords + User search) for BMBY
+// @version      1.1
+// @description  PROD clean dashboard (VOIP + Passwords + User search)
 // @updateURL    https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
 // @downloadURL  https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
 // @match        https://bmby.com/nihul/*
 // @match        https://www.bmby.com/nihul/*
-// @match        https://bmby.com/preferences/*
-// @match        https://www.bmby.com/preferences/*
 // @run-at       document-end
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -125,7 +123,7 @@
   /*****************************************************************
    * STORAGE (PROD)
    *****************************************************************/
-  const DEV_PREFIX = "BMBY__";
+  const PROD_PREFIX = "BMBY__";
   const HasGM =
     typeof GM_getValue === "function" &&
     typeof GM_setValue === "function" &&
@@ -133,7 +131,7 @@
 
   const Store = {
     get(k, fallback = null) {
-      const key = DEV_PREFIX + k;
+      const key = PROD_PREFIX + k;
       try {
         // GM_getValue can return objects/arrays directly (no JSON.parse needed)
         if (HasGM) {
@@ -151,14 +149,14 @@
       }
     },
     set(k, v) {
-      const key = DEV_PREFIX + k;
+      const key = PROD_PREFIX + k;
       try {
         if (HasGM) return GM_setValue(key, v);
         localStorage.setItem(key, JSON.stringify(v));
       } catch {}
     },
     del(k) {
-      const key = DEV_PREFIX + k;
+      const key = PROD_PREFIX + k;
       try {
         if (HasGM) return GM_deleteValue(key);
         localStorage.removeItem(key);
@@ -518,7 +516,7 @@ function escapeAttr(s) {
     const b = document.createElement("button");
     b.id = UI.btnId;
     b.type = "button";
-    b.textContent = "BMBY DEV";
+    b.textContent = "BMBY PROD";
     b.addEventListener("click", toggleDashboard);
     document.body.appendChild(b);
   }
@@ -550,8 +548,8 @@ function escapeAttr(s) {
 
     dash.innerHTML = `
       <div class="bmby-header">
-        <span class="bmby-pill dev">DEV: ON</span>
-        <span class="bmby-pill">דשבורד טלפוניה (DEV)</span>
+        <span class="bmby-pill dev">PROD: ON</span>
+        <span class="bmby-pill">דשבורד טלפוניה (PROD)</span>
         <span style="margin-right:auto"></span>
         <button class="bmby-btn secondary" data-x="close">סגור</button>
       </div>
@@ -644,7 +642,7 @@ function escapeAttr(s) {
       tabId === "extensions" ? "חיפוש שלוחות" : "בקרוב";
     return `
       <div style="font:900 14px/1.2 var(--bmby-font);">${title}</div>
-      <div class="bmby-small">בקרוב נוסיף את הפיצ׳ר הזה. כרגע DEV מתמקד ב-VOIP.</div>
+      <div class="bmby-small">בקרוב נוסיף את הפיצ׳ר הזה. כרגע PROD מתמקד ב-VOIP.</div>
     `;
   }
 
@@ -1373,7 +1371,7 @@ if (!p) p = clean(getByLabelFromDoc(doc, ["partition", "sip partition", "מחי�
     Store.set("voip_learn_template", template);
     Store.set("voip_learn_kind", ev.kind || "fetch");
     Store.set("voip_learn_last", { template, at: Date.now() });
-    toast("✅ למדתי את מקור ה-VOIP מהמערכת (יישמר ב-DEV)", "ok");
+    toast("✅ למדתי את מקור ה-VOIP מהמערכת (יישמר ב-PROD)", "ok");
   }
 
   // Live learning: listen to network events while the user works normally
@@ -1711,7 +1709,7 @@ if (hasVal(base.domain) || hasVal(base.account) || hasVal(base.partition)) {
     function refreshLearnStatus() {
       const t = getLearnedTemplate();
       if (!learnStatus) return;
-      if (t) learnStatus.textContent = "למידת VOIP: פעילה ✅ (נלמד אוטומטית מרשת – DEV)";
+      if (t) learnStatus.textContent = "למידת VOIP: פעילה ✅ (נלמד אוטומטית מרשת – PROD)";
       else learnStatus.textContent = "למידת VOIP: לא קיימת. לחץ 'בדוק VOIP מהמערכת' ואז פתח VOIP ידני פעם אחת (למשל מתפריט BMBY) כדי שאאתר את ה-API.";
     }
     refreshLearnStatus();
@@ -1770,7 +1768,7 @@ if (hasVal(base.domain) || hasVal(base.account) || hasVal(base.partition)) {
    * - הכפתור רק שומר מצב; ההרצה האוטומטית קורית לפי העמוד הנוכחי
    *****************************************************************/
 
-  // Keys (DEV) – stored in Store (GM/local)
+  // Keys (PROD) – stored in Store (GM/local)
   const US = {
     active: 'users_active_v1',
     username: 'users_username_v1',
@@ -2504,7 +2502,7 @@ if (hasVal(base.domain) || hasVal(base.account) || hasVal(base.partition)) {
 })();
 
 
-// === PATCH: Add Interfaces Page Link in Password Tab (DEV 12.3+) ===
+// === PATCH: Add Interfaces Page Link in Password Tab (PROD 12.3+) ===
 (function(){
   function addInterfacesLink(){
     const pidInput = document.querySelector('#bmby-t3-pid');
