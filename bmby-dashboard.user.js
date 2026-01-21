@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BMBY – Link Telephony Dashboard
 // @namespace    bmby-link-telephony-dashboard
-// @version      0.1.1
+// @version      0.1.2
 // @description  Tabs dashboard (VOIP + Passwords + User search) for BMBY
 // @updateURL    https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
 // @downloadURL  https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
