@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BMBY – Link Telephony Dashboard
 // @namespace    bmby-link-telephony-dashboard
-// @version      0.1.2
+// @version      0.1.0
 // @description  Tabs dashboard (VOIP + Passwords + User search) for BMBY
 // @updateURL    https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
 // @downloadURL  https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
@@ -518,7 +518,7 @@ function escapeAttr(s) {
     const b = document.createElement("button");
     b.id = UI.btnId;
     b.type = "button";
-    b.textContent = "BMBY DEV";
+    b.textContent = "BMBY";
     b.addEventListener("click", toggleDashboard);
     document.body.appendChild(b);
   }
@@ -550,8 +550,7 @@ function escapeAttr(s) {
 
     dash.innerHTML = `
       <div class="bmby-header">
-        <span class="bmby-pill dev">DEV: ON</span>
-        <span class="bmby-pill">דשבורד טלפוניה (DEV)</span>
+        <span class="bmby-pill">דשבורד טלפוניה</span>
         <span style="margin-right:auto"></span>
         <button class="bmby-btn secondary" data-x="close">סגור</button>
       </div>
@@ -583,7 +582,7 @@ function escapeAttr(s) {
     const saved = Store.get("activeTab", "voip");
     setActiveTab(saved);
 
-    document.documentElement.classList.add("bmby-dev-mode");
+    // prod: no dev mode class
   }
 
   function openDashboard() {
@@ -644,7 +643,7 @@ function escapeAttr(s) {
       tabId === "extensions" ? "חיפוש שלוחות" : "בקרוב";
     return `
       <div style="font:900 14px/1.2 var(--bmby-font);">${title}</div>
-      <div class="bmby-small">בקרוב נוסיף את הפיצ׳ר הזה. כרגע DEV מתמקד ב-VOIP.</div>
+      <div class="bmby-small">בקרוב נוסיף את הפיצ׳ר הזה. כרגע הדשבורד מתמקד ב-VOIP.</div>
     `;
   }
 
@@ -690,8 +689,7 @@ function escapeAttr(s) {
 
     const req = loadPwReq();
     if (!req || !req.password) {
-      log('No pending password request in storage. Showing manual highlight button.');
-      try { ensureManualPwHighlighter(); } catch (e) { log('ensureManualPwHighlighter failed', e); }
+      log('No pending password request in storage.');
       return;
     }
     log('Pending password request found', req);
@@ -1373,7 +1371,7 @@ if (!p) p = clean(getByLabelFromDoc(doc, ["partition", "sip partition", "מחי�
     Store.set("voip_learn_template", template);
     Store.set("voip_learn_kind", ev.kind || "fetch");
     Store.set("voip_learn_last", { template, at: Date.now() });
-    toast("✅ למדתי את מקור ה-VOIP מהמערכת (יישמר ב-DEV)", "ok");
+    toast("✅ למדתי את מקור ה-VOIP מהמערכת ", "ok");
   }
 
   // Live learning: listen to network events while the user works normally
@@ -1711,7 +1709,7 @@ if (hasVal(base.domain) || hasVal(base.account) || hasVal(base.partition)) {
     function refreshLearnStatus() {
       const t = getLearnedTemplate();
       if (!learnStatus) return;
-      if (t) learnStatus.textContent = "למידת VOIP: פעילה ✅ (נלמד אוטומטית מרשת – DEV)";
+      if (t) learnStatus.textContent = "למידת VOIP: פעילה ✅";
       else learnStatus.textContent = "למידת VOIP: לא קיימת. לחץ 'בדוק VOIP מהמערכת' ואז פתח VOIP ידני פעם אחת (למשל מתפריט BMBY) כדי שאאתר את ה-API.";
     }
     refreshLearnStatus();
@@ -2100,12 +2098,9 @@ if (hasVal(base.domain) || hasVal(base.account) || hasVal(base.partition)) {
     return '';
   }
 
-  async function usFetchUsernameFromEditUserUrl(url, abortSet) {
+  async function usFetchUsernameFromEditUserUrl(url) {
     const ctrl = new AbortController();
-    if (abortSet) abortSet.add(ctrl);
-    const t = setTimeout(() => {
-      try { ctrl.abort('timeout'); } catch (_) {}
-    }, US_FETCH_TIMEOUT_MS);
+    const t = setTimeout(() => ctrl.abort('timeout'), US_FETCH_TIMEOUT_MS);
     try {
       const res = await fetch(url, {
         method: 'GET',
@@ -2121,7 +2116,6 @@ if (hasVal(base.domain) || hasVal(base.account) || hasVal(base.partition)) {
       return '';
     } finally {
       clearTimeout(t);
-      if (abortSet) abortSet.delete(ctrl);
     }
   }
 
@@ -2167,15 +2161,6 @@ if (hasVal(base.domain) || hasVal(base.account) || hasVal(base.partition)) {
 
     await usSleep(220);
 
-    // abort helpers for fast stop when found / navigation
-    const abortSet = new Set();
-    const abortAll = () => {
-      for (const c of Array.from(abortSet)) {
-        try { c.abort('found'); } catch (_) {}
-      }
-      abortSet.clear();
-    };
-
     const items = usCollectEditLinksOnUsersPage();
 
     // ⚡ Fast path: אם כבר למדנו UserID ל-username הזה בעבר – צובעים מיד בלי iframes
@@ -2192,15 +2177,16 @@ if (hasVal(base.domain) || hasVal(base.account) || hasVal(base.partition)) {
           usSetStatus('');
           Store.del(US.active);
           return { found:true };
+        } else {
+          usLogAppend(`ℹ️ יש קאש ל-UserID=${cached.uid} אבל הוא לא קיים בפרויקט הזה – עובר לסריקה…`);
         }
       }
     }catch{}
 
-    if (!items.length) {
-      usSetStatus('אין לינקים של "עריכה" בדף');
-      Store.del(US.active);
-      return { found:false };
-    }
+    usLogAppend(`מסך משתמשים: ${items.length} לינקים של "עריכה"`);
+    usLogAppend(`מחפש: ${targetUsername}`);
+
+    if (!items.length) { usLogAppend('❌ 0 עריכות חולצו.'); return { found:false }; }
 
     const target = usNorm(targetUsername);
     let idx = 0;
@@ -2225,24 +2211,22 @@ if (hasVal(base.domain) || hasVal(base.account) || hasVal(base.partition)) {
         }
 
         try {
-          // 1) Fast path: fetch HTML (no iframe rendering)
-          if (US_FETCH_FIRST) {
-            const seenFetch = await usFetchUsernameFromEditUserUrl(it.url, abortSet);
-            if (seenFetch) {
-              if (seenFetch === target) {
-                found = true;
-                foundItem = it;
-                // stop everyone else immediately
-                try { Store.del(US.active); } catch (_) {}
-                abortAll();
-                return;
-              }
-              // got a definitive username from HTML and it's not ours → skip iframe
-              continue;
+        // 1) Fast path: fetch HTML (no iframe rendering)
+        if (US_FETCH_FIRST) {
+          const seenFetch = await usFetchUsernameFromEditUserUrl(it.url);
+          if (seenFetch) {
+            if (seenFetch === target) {
+              found = true;
+              foundItem = it;
+              return;
             }
+            // got a definitive username from HTML and it's not ours → skip iframe
+            continue;
+          } else {
           }
+        }
 
-          // 2) Fallback: iframe DOM
+        // 2) Fallback: iframe DOM
           await usLoadIframe(iframe, it.url, US_IFRAME_TIMEOUT_MS);
 
           // EditUser sometimes fills late – poll
@@ -2256,9 +2240,6 @@ if (hasVal(base.domain) || hasVal(base.account) || hasVal(base.partition)) {
             if (seen && seen === target) {
               found = true;
               foundItem = it;
-              // stop everyone else immediately
-              try { Store.del(US.active); } catch (_) {}
-              abortAll();
               return;
             }
             await usSleep(US_POST_LOAD_POLL_MS);
@@ -2269,13 +2250,9 @@ if (hasVal(base.domain) || hasVal(base.account) || hasVal(base.partition)) {
     };
 
     await Promise.allSettled(pool.map(worker));
-    abortAll();
-    pool.forEach(fr => {
-      try { fr.src = 'about:blank'; } catch (_) {}
-      try { if (fr && fr.remove) fr.remove(); } catch (_) {}
-    });
+    pool.forEach(fr => { try { if (fr && fr.remove) fr.remove(); } catch (_) {} });
 
-    // if we already cleared active because we found the user, continue to paint.
+    if (!isActive()) return { found:false };
 
     if (found && foundItem) {
       const label = `username=${targetUsername} | UserID=${foundItem.uid}`;
@@ -2291,8 +2268,7 @@ if (hasVal(base.domain) || hasVal(base.account) || hasVal(base.partition)) {
       try { toast('✅ מצאתי וסימנתי בעמוד. סגרתי את הדשבורד כדי שתראה את הצביעה.', true); } catch {}
       Store.set(US.last, { ts: Date.now(), found: true, label });
       usSetStatus('');
-      // active may already be cleared above; ensure it's cleared.
-      try { Store.del(US.active); } catch (_) {}
+      Store.del(US.active);
       return { found:true };
     }
 
@@ -2366,8 +2342,9 @@ if (hasVal(base.domain) || hasVal(base.account) || hasVal(base.partition)) {
       Store.del(US.cur);
       Store.del(US.companies);
       usLogClear();
-      usSetStatus('פותח חיפוש חברות…');
+      usSetStatus('');
       Store.set(US.runId, Date.now());
+      usLogAppend(`▶️ Start (${mode}) ${u}`);
 
       const startUrl = `${location.origin}/nihul/Wizard.php?q=${encodeURIComponent(u)}&x=11&y=14`;
       Store.set('dash_open_on_load_v1', true);
@@ -2401,8 +2378,7 @@ if (hasVal(base.domain) || hasVal(base.account) || hasVal(base.partition)) {
         if (!c) return;
         Store.set(US.cur, c);
         Store.set(US.active, true);
-        usLogClear();
-        usSetStatus('פותח פרויקטים בחברה…');
+        usLogAppend(`➡️ נכנס לחברה: ${c.name}`);
         Store.set('dash_open_on_load_v1', true);
         usGo(c.url);
       });
@@ -2434,7 +2410,7 @@ if (hasVal(base.domain) || hasVal(base.account) || hasVal(base.partition)) {
       const companies = usExtractCompanyLinksFromWizard();
       Store.set(US.companies, companies);
       usLogClear();
-      usSetStatus(`נמצאו ${companies.length} חברות`);
+      usLogAppend(`ב-Wizard: נמצאו ${companies.length} חברות`);
 
       if (!companies.length) {
         toast('לא נמצאו חברות', 'err');
@@ -2444,7 +2420,7 @@ if (hasVal(base.domain) || hasVal(base.account) || hasVal(base.partition)) {
 
       if (companies.length === 1) {
         Store.set(US.cur, companies[0]);
-        usSetStatus('פותח חברה…');
+        usLogAppend(`AUTO: חברה יחידה → ${companies[0].name}`);
         Store.set('dash_open_on_load_v1', true);
         usGo(companies[0].url);
         return;
@@ -2453,7 +2429,7 @@ if (hasVal(base.domain) || hasVal(base.account) || hasVal(base.partition)) {
       if (mode === 'all') {
         Store.set(US.cur, companies[0]);
         Store.set(US.queue, companies.slice(1));
-        usSetStatus('סורק חברות…');
+        usLogAppend(`SCAN ALL: נכנס לחברה 1/${companies.length}: ${companies[0].name}`);
         Store.set('dash_open_on_load_v1', true);
         usGo(companies[0].url);
         return;
@@ -2469,7 +2445,7 @@ if (hasVal(base.domain) || hasVal(base.account) || hasVal(base.partition)) {
       const cur = Store.get(US.cur, null) || {};
       const cid = cur.cid || url.searchParams.get('CompanyID') || '';
       const pids = usGetFindedProjectsFromCompanyUrl();
-      usSetStatus(`חברה ${cid}: ${pids.length ? 'פותח משתמשים…' : 'אין פרויקטים'}`);
+      usLogAppend(`בדף חברה CompanyID=${cid} | FindedProjects=${pids.join(',') || '(ריק)'}`);
 
       if (!pids.length) {
         const mode = String(Store.get(US.mode, 'single') || 'single');
@@ -2479,18 +2455,18 @@ if (hasVal(base.domain) || hasVal(base.account) || hasVal(base.partition)) {
           Store.set(US.queue, q);
           if (next) {
             Store.set(US.cur, next);
-            usSetStatus('חברה הבאה…');
+            usLogAppend(`➡️ חברה הבאה… ${next.name}`);
             Store.set("dash_open_on_load_v1", true);
             usGo(next.url);
           } else {
-            usSetStatus('נגמרו חברות');
+            usLogAppend("✅ נגמרו חברות.");
             Store.del(US.active);
           }
         }
         return;
       }
 
-      usSetStatus('פותח מסך משתמשים…');
+      usLogAppend(`➡️ נכנס למסך משתמשים: ProjectID=${pids[0]}`);
       Store.set('dash_open_on_load_v1', true);
       usGoUsersDirect(pids[0], cid);
       return;
@@ -2507,11 +2483,11 @@ if (hasVal(base.domain) || hasVal(base.account) || hasVal(base.partition)) {
           Store.set(US.queue, q);
           if (next) {
             Store.set(US.cur, next);
-            usSetStatus('חברה הבאה…');
+            usLogAppend(`➡️ חברה הבאה… ${next.name}`);
             Store.set("dash_open_on_load_v1", true);
             usGo(next.url);
           } else {
-            usSetStatus('נגמרו חברות');
+            usLogAppend("✅ נגמרו חברות.");
             Store.del(US.active);
           }
       }
