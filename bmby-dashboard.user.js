@@ -1,14 +1,14 @@
 // ==UserScript==
-// @name         BMBY – Link Telephony Dashboard
-// @namespace    bmby-link-telephony-dashboard
-// @version      1.2.1
-// @description  Tabs dashboard (VOIP + Passwords + User search) for BMBY
+// @name         BMBY Dashboard (PROD)
+// @namespace    bmby-dashboard-prod
+// @version      1.2.2
+// @description  Clean PROD dashboard (includes Project extractor + ProjectsBoards highlight).
+// @match        https://www.bmby.com/nihul/*
+// @match        https://bmby.com/nihul/*
+// @match        https://www.bmby.com/nihul/ProjectsBoards.php*
+// @match        https://bmby.com/nihul/ProjectsBoards.php*
 // @updateURL    https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
 // @downloadURL  https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
-// @match        https://bmby.com/nihul/*
-// @match        https://bmby.com/nihul/ProjectsBoards.php*
-// @match        https://www.bmby.com/nihul/ProjectsBoards.php*
-// @match        https://www.bmby.com/nihul/*
 // @run-at       document-end
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -20,8 +20,8 @@
 
 // -------------------- ProjectsBoards Auto-Highlight (embedded helper) --------------------
 (function bmbyProjectsBoardsAutoHighlight() {
-  const PB_TAG = "[PB]";
-  const log = (...a) => { try {  } catch {} };
+  const PB_TAG = "[PB-AUTO 0.1.8]";
+  const log = (...a) => { try { console.log(PB_TAG, ...a); } catch {} };
 
   try {
     if (!/\/nihul\/ProjectsBoards\.php/i.test(location.pathname)) return;
@@ -202,7 +202,7 @@
       run();
     }
   } catch (e) {
-    try {  } catch {}
+    try { console.error(PB_TAG, e); } catch {}
   }
 })();
 
@@ -212,7 +212,7 @@
 
   // PROD default: quiet. To debug, set Store.set('DBG', true) from console.
   const DBG = false;
-  const log = (...a) => { if (DBG)  };
+  const log = (...a) => { if (DBG) console.log('[BMBY-DASH]', ...a); };
 
   // ===== USERS: perf constants (used by Users tab scanning) =====
   const IFRAME_CONCURRENCY   = 10;
@@ -744,7 +744,7 @@ function escapeAttr(s) {
 
     dash.innerHTML = `
       <div class="bmby-header">
-        <span class="bmby-pill dev">PROD: ON</span>
+        <span class="bmby-pill dev">PROD</span>
         <span class="bmby-pill">דשבורד טלפוניה (PROD)</span>
         <span style="margin-right:auto"></span>
         <button class="bmby-btn secondary" data-x="close">סגור</button>
@@ -1091,7 +1091,7 @@ function bindEditProjectPanel(panel) {
       setOut(data);
       toast("✅ נמצא", "ok");
     } catch (e) {
-      
+      console.error(e);
       statusEl.textContent = "שגיאה (ראה קונסול)";
       toast("❌ שגיאה", "error");
     }
@@ -1271,7 +1271,7 @@ function pbAutoHighlightFromStore() {
       // clear to avoid re-trigger loops
       Store.set("pb_target_pid", null);
       toast(`❌ לא נמצא: ${pid}`, "error");
-      
+      console.log(TAG, "PB auto highlight NOT_FOUND after tries", tries, "pid", pid);
       return;
     }
     setTimeout(tick, INTERVAL_MS);
@@ -1572,7 +1572,7 @@ function renderPasswordsPanel() {
         const pidDigits = pid;
         await findPasswordInInterfaces(pidDigits, pw, resEl);
       } catch (err) {
-        
+        console.error("[BMBY PW]", err);
         resEl.innerHTML = `<div class="bmby-small">❌ שגיאה בחיפוש (ייתכן שנדרש להתחבר מחדש)</div>`;
         toast("❌ שגיאה בחיפוש סיסמא", false);
       }
@@ -2276,7 +2276,7 @@ if (hasVal(base.domain) || hasVal(base.account) || hasVal(base.partition)) {
       addHistory("voip", pid);
       toast(copied ? "✅ Account הועתק ללוח" : "⚠️ לא הצלחתי להעתיק ללוח", copied ? "ok" : "warn");
     } catch (err) {
-      
+      console.error(err);
       toast("שגיאה בחיפוש VOIP (רקע) – פרטים בקונסול.", "error");
     }
   }
