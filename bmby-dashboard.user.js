@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BMBY – Link Telephony Dashboard
 // @namespace    bmby-link-telephony-dashboard
-// @version      1.2
+// @version      1.2.1
 // @description  Tabs dashboard (VOIP + Passwords + User search) for BMBY
 // @updateURL    https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
 // @downloadURL  https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
@@ -9,8 +9,6 @@
 // @match        https://bmby.com/nihul/ProjectsBoards.php*
 // @match        https://www.bmby.com/nihul/ProjectsBoards.php*
 // @match        https://www.bmby.com/nihul/*
-// @match        https://bmby.com/preferences/*
-// @match        https://www.bmby.com/preferences/*
 // @run-at       document-end
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -3181,6 +3179,5 @@ if (hasVal(base.domain) || hasVal(base.account) || hasVal(base.partition)) {
   if (/\/nihul\/ProjectsBoards\.php/i.test(location.pathname)) { setTimeout(pbAutoHighlightFromStore, 1200); setTimeout(pbAutoHighlightFromStore, 3500); }
 
 })();
-
 
 
