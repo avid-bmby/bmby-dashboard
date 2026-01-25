@@ -1,24 +1,220 @@
 // ==UserScript==
-// @name         BMBY Dashboard (PROD)
+// @name         BMBY – Link Telephony Dashboard
 // @namespace    bmby-link-telephony-dashboard
-// @version      1.1
-// @description  PROD clean dashboard (VOIP + Passwords + User search)
+// @version      1.2
+// @description  Tabs dashboard (VOIP + Passwords + User search) for BMBY
 // @updateURL    https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
 // @downloadURL  https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
 // @match        https://bmby.com/nihul/*
+// @match        https://bmby.com/nihul/ProjectsBoards.php*
+// @match        https://www.bmby.com/nihul/ProjectsBoards.php*
 // @match        https://www.bmby.com/nihul/*
+// @match        https://bmby.com/preferences/*
+// @match        https://www.bmby.com/preferences/*
 // @run-at       document-end
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_deleteValue
+// @grant        GM_xmlhttpRequest
+// @connect      www.bmby.com
+// @connect      bmby.com
 // ==/UserScript==
+
+// -------------------- ProjectsBoards Auto-Highlight (embedded helper) --------------------
+(function bmbyProjectsBoardsAutoHighlight() {
+  const PB_TAG = "[PB]";
+  const log = (...a) => { try {  } catch {} };
+
+  try {
+    if (!/\/nihul\/ProjectsBoards\.php/i.test(location.pathname)) return;
+
+    const norm = (s) => String(s ?? "")
+      .replace(/\u00a0/g, " ")
+      .replace(/[\s\u200e\u200f]+/g, " ")
+      .trim();
+
+    const normalizePid = (input) => {
+      const m = String(input || "").trim().match(/\d+/);
+      return m ? m[0] : null;
+    };
+
+    const getPidFromUrl = () => {
+      try {
+        const u = new URL(location.href);
+        return u.searchParams.get("BoardProjectID") || u.searchParams.get("ProjectID");
+      } catch { return null; }
+    };
+
+    const ensureStyles = () => {
+      if (document.getElementById("bmbyPBHLStyle")) return;
+      const st = document.createElement("style");
+      st.id = "bmbyPBHLStyle";
+      st.textContent = `
+        .bmbyPBHL_auto{
+          outline:3px solid rgba(0,140,255,.9) !important;
+          box-shadow:0 0 0 6px rgba(0,140,255,.18) !important;
+          background:rgba(255, 235, 140, .65) !important;
+        }
+        .bmbyPBHL_auto td, .bmbyPBHL_auto th{ background:transparent !important; }
+        #bmbyPBToast{
+          position:fixed;right:16px;bottom:16px;z-index:2147483647;
+          padding:8px 10px;border-radius:12px;border:1px solid rgba(0,0,0,.12);
+          background:rgba(255,255,255,.97);font:900 12px Arial;
+          box-shadow:0 10px 25px rgba(0,0,0,.18);
+          display:none;
+        }
+      `;
+      (document.head || document.documentElement).appendChild(st);
+    };
+
+    function toast(msg) {
+      ensureStyles();
+      let el = document.getElementById("bmbyPBToast");
+      if (!el) {
+        el = document.createElement("div");
+        el.id = "bmbyPBToast";
+        (document.body || document.documentElement).appendChild(el);
+      }
+      el.textContent = msg;
+      el.style.display = "block";
+      clearTimeout(toast._t);
+      toast._t = setTimeout(() => (el.style.display = "none"), 2200);
+    }
+
+    function clearHL() {
+      document.querySelectorAll(".bmbyPBHL_auto").forEach((tr) => tr.classList.remove("bmbyPBHL_auto"));
+    }
+
+    function findHeaderCell(table) {
+      const rows = Array.from(table.querySelectorAll("tr"));
+      for (const tr of rows) {
+        const ths = Array.from(tr.querySelectorAll("th"));
+        for (const th of ths) {
+          if (norm(th.textContent) === "BoardProjectID") return { tr, th };
+        }
+      }
+      return null;
+    }
+
+    function findRow(pid) {
+      const tables = Array.from(document.querySelectorAll("table"));
+      for (const table of tables) {
+        const hdr = findHeaderCell(table);
+        if (!hdr) continue;
+
+        const colIndex = hdr.th.cellIndex;
+        const allRows = Array.from(table.querySelectorAll("tr"));
+        const startIdx = allRows.indexOf(hdr.tr) + 1;
+
+        for (let i = Math.max(0, startIdx); i < allRows.length; i++) {
+          const tr = allRows[i];
+          const kids = Array.from(tr.children).filter((el) => el && (el.tagName === "TD" || el.tagName === "TH"));
+          const cell = kids[colIndex] || tr.children[colIndex];
+          if (cell && norm(cell.textContent) === String(pid)) return tr;
+        }
+      }
+      return null;
+    }
+
+    function highlight(pid) {
+      const p = normalizePid(pid);
+      if (!p) return false;
+      ensureStyles();
+      clearHL();
+      const row = findRow(p);
+      if (!row) return false;
+      row.classList.add("bmbyPBHL_auto");
+      try { row.scrollIntoView({ behavior: "smooth", block: "center" }); } catch {}
+      return true;
+    }
+
+    function tryApplyTableSearch(pid) {
+      const candidates = [
+        "#DataTables_Table_0_filter input",
+        "div.dataTables_filter input",
+        "input[type='search']",
+        "input[aria-controls*='Table']",
+      ];
+      for (const sel of candidates) {
+        const inp = document.querySelector(sel);
+        if (!inp) continue;
+        inp.focus();
+        inp.value = String(pid);
+        inp.dispatchEvent(new Event("input", { bubbles: true }));
+        inp.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: "Enter" }));
+        log("Applied table search via", sel);
+        toast("מסנן טבלה: " + pid);
+        return true;
+      }
+      return false;
+    }
+
+    async function run() {
+      const pid = normalizePid(getPidFromUrl());
+      if (!pid) return;
+
+      log("Start auto highlight for", pid, "url:", location.href);
+      toast("מחפש BoardProjectID=" + pid + "...");
+
+      // Phase 1
+      for (let i = 0; i < 80; i++) {
+        if (highlight(pid)) {
+          toast("✅ נצבע: " + pid);
+          log("Highlighted in phase1 try", i + 1);
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 250));
+      }
+
+      // Phase 2 (pagination/filter)
+      if (!document.querySelector(".bmbyPBHL_auto")) {
+        const applied = tryApplyTableSearch(pid);
+        if (applied) {
+          for (let i = 0; i < 60; i++) {
+            if (highlight(pid)) {
+              toast("✅ נצבע אחרי סינון: " + pid);
+              log("Highlighted after filter try", i + 1);
+              break;
+            }
+            await new Promise((r) => setTimeout(r, 250));
+          }
+        }
+      }
+
+      // Phase 3 (replacement)
+      const until = Date.now() + 20000;
+      const obs = new MutationObserver(() => {
+        if (Date.now() > until) { try { obs.disconnect(); } catch {} return; }
+        if (document.querySelector(".bmbyPBHL_auto")) return;
+        highlight(pid);
+      });
+
+      try { obs.observe(document.body || document.documentElement, { childList: true, subtree: true }); } catch {}
+      setTimeout(() => { try { obs.disconnect(); } catch {} }, 20200);
+
+      if (!document.querySelector(".bmbyPBHL_auto")) {
+        log("Not highlighted yet. tables:", document.querySelectorAll("table").length);
+        toast("⚠️ לא מצאתי עדיין (בדוק קונסול)");
+      }
+    }
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", run, { once: true });
+    } else {
+      run();
+    }
+  } catch (e) {
+    try {  } catch {}
+  }
+})();
+
 
 (() => {
   "use strict";
 
   // PROD default: quiet. To debug, set Store.set('DBG', true) from console.
   const DBG = false;
-  const log = (...a) => { if (DBG) console.log('[BMBY-DASH]', ...a); };
+  const log = (...a) => { if (DBG)  };
 
   // ===== USERS: perf constants (used by Users tab scanning) =====
   const IFRAME_CONCURRENCY   = 10;
@@ -536,6 +732,8 @@ function escapeAttr(s) {
     { id: "passwords", label: "סיסמאות" },
     { id: "extensions", label: "שלוחות" },
     { id: "users", label: "משתמשים" },
+    { id: "editproject", label: "פרויקט" },
+    { id: "boards", label: "Boards" },
   ];
 
   function buildDashboard() {
@@ -628,14 +826,461 @@ function escapeAttr(s) {
     else if (tabId === "passwords") panel.innerHTML = renderPasswordsPanel();
     else if (tabId === "extensions") panel.innerHTML = renderExtensionsPanel();
     else if (tabId === "users") panel.innerHTML = renderUsersPanel();
+    else if (tabId === "editproject") panel.innerHTML = renderEditProjectPanel();
+    else if (tabId === "boards") panel.innerHTML = renderBoardsPanel();
     else panel.innerHTML = renderComingSoon(tabId);
 
     if (tabId === "voip") bindVoipPanel(panel);
     if (tabId === "passwords") bindPasswordsPanel(panel);
     if (tabId === "extensions") bindExtensionsPanel(panel);
     if (tabId === "users") bindUsersPanel(panel);
+    if (tabId === "editproject") bindEditProjectPanel(panel);
+    if (tabId === "boards") bindBoardsPanel(panel);
   }
 
+
+/*****************************************************************
+ * PROJECT: EditProject Extractor (background fetch)
+ *****************************************************************/
+function renderEditProjectPanel() {
+  return `
+    <div style="font:900 14px/1.2 var(--bmby-font);">חילוץ נתונים מפרויקט (EditProject)</div>
+    <div class="bmby-small">מזינים מספר פרויקט (P1234 / 1234) ➜ שליפה ברקע ➜ שם פרויקט / סטטוס / איש מכירות (Bmby)</div>
+
+    <div class="bmby-row" style="margin-top:10px; gap:8px; align-items:center;">
+      <input class="bmby-input" data-x="pid" placeholder="מספר פרויקט (P1234 או 1234)" style="flex:1; min-width:160px;">
+      <button class="bmby-btn" data-x="run">חפש</button>
+      <button class="bmby-btn secondary" data-x="copyLine" title="העתק שורה קצרה">Copy</button>
+    </div>
+
+    <div class="bmby-card" style="margin-top:10px; padding:10px;">
+      <div class="bmby-small muted" data-x="status">מוכן.</div>
+      <div style="margin-top:8px; display:grid; grid-template-columns:140px 1fr; gap:6px 10px;">
+        <div class="bmby-small muted">ProjectID</div><div data-x="outPid" style="font-weight:900;">—</div>
+        <div class="bmby-small muted">CompanyID</div><div data-x="outCid" style="font-weight:900;">—</div>
+        <div class="bmby-small muted">שם הפרויקט</div><div data-x="outName" style="font-weight:900;">—</div>
+        <div class="bmby-small muted">סטאטוס</div><div data-x="outStatus" style="font-weight:900;">—</div>
+        <div class="bmby-small muted">איש מכירות (Bmby)</div><div data-x="outSales" style="font-weight:900;">—</div>
+        <div class="bmby-small muted">EditProject</div><div><a href="#" data-x="outLink">Link</a></div>
+      </div>
+    </div>
+  `;
+}
+
+function normalizePidLite(input) {
+  const m = String(input || "").trim().match(/\d+/);
+  return m ? m[0] : null;
+}
+
+function normTextLite(s) {
+  return String(s || "")
+    .replace(/\u00a0/g, " ")
+    .replace(/[\s\u200e\u200f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function fetchCompanyIdForPid_Wizard(pid) {
+  // Same logic as VOIP: Wizard.php?q=P#### then find onclick containing FindedProjects=pid and CompanyID=
+  const q = "P" + String(pid);
+  const url = location.origin + "/nihul/Wizard.php?q=" + encodeURIComponent(q);
+  const res = await fetch(url, { credentials: "include" });
+  if (!res.ok) throw new Error("Wizard fetch failed: " + res.status);
+  const html = await res.text();
+  const doc = new DOMParser().parseFromString(html, "text/html");
+
+  const tds = Array.from(doc.querySelectorAll("td[onclick]"));
+  const td = tds.find((x) => {
+    const oc = x.getAttribute("onclick") || "";
+    return oc.includes("Wizard.php") && oc.includes("CompanyID=") && oc.includes("FindedProjects=") && oc.includes(String(pid));
+  });
+  if (!td) return null;
+
+  const oc = td.getAttribute("onclick") || "";
+  const mm = oc.match(/CompanyID=(\d+)/i);
+  return mm ? mm[1] : null;
+}
+
+function extractFromEditProjectHtml(html) {
+  const doc = new DOMParser().parseFromString(String(html || ""), "text/html");
+
+  const projectName = normTextLite(doc.querySelector('input[name="Project"]')?.value) || null;
+
+  const statusSelect = doc.querySelector('select[name="Active"]');
+  const status = statusSelect
+    ? normTextLite(statusSelect.options?.[statusSelect.selectedIndex]?.textContent || statusSelect.value)
+    : null;
+
+  // Sales: find row containing "איש מכירות" and take readonly input value in the row
+  let sales = null;
+  const cells = Array.from(doc.querySelectorAll("td,th"));
+  for (const c of cells) {
+    const t = normTextLite(c.textContent);
+    if (!t) continue;
+    if (!t.includes("איש מכירות")) continue;
+    const row = c.closest("tr");
+    if (!row) continue;
+    const ro = row.querySelector("input[readonly]");
+    if (ro && normTextLite(ro.value)) { sales = normTextLite(ro.value); break; }
+    const any = row.querySelector("input,select,textarea");
+    if (any) {
+      const v = any.tagName === "SELECT"
+        ? normTextLite(any.options?.[any.selectedIndex]?.textContent || any.value)
+        : normTextLite(any.value);
+      if (v) { sales = v; break; }
+    }
+  }
+
+  return { projectName, status, salesBmby: sales };
+}
+
+async function fetchTextSmart(url) {
+  // Robust Hebrew decode using GM_xmlhttpRequest(arraybuffer) when available.
+  const hasGM = (typeof GM_xmlhttpRequest === "function");
+  if (!hasGM) {
+    const r = await fetch(url, { credentials: "include" });
+    if (!r.ok) throw new Error("fetch failed: " + r.status);
+    return await r.text();
+  }
+
+  const res = await new Promise((resolve, reject) => {
+    GM_xmlhttpRequest({
+      method: "GET",
+      url,
+      responseType: "arraybuffer",
+      withCredentials: true,
+      timeout: 45000,
+      onload: (r) => resolve(r),
+      onerror: () => reject(new Error("GM_xhr error")),
+      ontimeout: () => reject(new Error("GM_xhr timeout")),
+    });
+  });
+
+  const ab = res.response;
+  const u8 = new Uint8Array(ab);
+  const headersText = String(res.responseHeaders || "");
+  const lcHeaders = headersText.toLowerCase();
+
+  const charsetFromHeaders = () => {
+    const mm = lcHeaders.match(/content-type:[^\n]*charset\s*=\s*([^\s;]+)/i);
+    return mm ? mm[1].trim().toLowerCase() : null;
+  };
+
+  const charsetFromBytes = () => {
+    const lim = Math.min(u8.length, 4096);
+    let ascii = "";
+    for (let i = 0; i < lim; i++) {
+      const c = u8[i];
+      ascii += (c >= 32 && c < 127) ? String.fromCharCode(c) : " ";
+    }
+    let m = ascii.match(/charset\s*=\s*["']?\s*([a-z0-9\-_]+)/i);
+    if (m) return String(m[1]).toLowerCase();
+    m = ascii.match(/content=["'][^"']*charset=([a-z0-9\-_]+)/i);
+    if (m) return String(m[1]).toLowerCase();
+    return null;
+  };
+
+  const decode = (enc) => {
+    try { return new TextDecoder(enc, { fatal: false }).decode(u8); } catch { return null; }
+  };
+
+  const score = (s) => {
+    if (s == null) return -1e9;
+    const bad = (s.match(/\uFFFD/g) || []).length;
+    const heb = (s.match(/[\u0590-\u05FF]/g) || []).length;
+    const moj = (s.match(/×/g) || []).length;
+    return heb * 3 - bad * 6 - moj * 2;
+  };
+
+  const candidates = [];
+  const ch1 = charsetFromHeaders();
+  const ch2 = charsetFromBytes();
+  if (ch1) candidates.push(ch1);
+  if (ch2) candidates.push(ch2);
+
+  // Common for old Hebrew pages
+  candidates.push("windows-1255", "iso-8859-8", "utf-8");
+
+  const uniq = [];
+  for (const c of candidates) {
+    const cc = String(c || "").toLowerCase();
+    if (cc && !uniq.includes(cc)) uniq.push(cc);
+  }
+
+  let best = null;
+  for (const enc of uniq) {
+    const t = decode(enc);
+    const sc = score(t);
+    if (!best || sc > best.score) best = { t, score: sc, enc };
+  }
+
+  return (best && best.t) || decode("utf-8") || "";
+}
+
+async function fetchEditProjectHtml(pid, cid) {
+  const url = `${location.origin}/nihul/EditProject.php?ProjectID=${encodeURIComponent(pid)}&CompanyID=${encodeURIComponent(cid)}&BrokerageProject=no`;
+  const html = await fetchTextSmart(url);
+  return { url, html };
+}
+
+async function runEditProjectExtract(pidInput) {
+  const pid = normalizePidLite(pidInput);
+  if (!pid) throw new Error("INVALID_PID");
+  const cid = await fetchCompanyIdForPid_Wizard(pid);
+  if (!cid) return { ok: false, projectId: pid, companyId: null, error: "NO_COMPANYID" };
+
+  const fetched = await fetchEditProjectHtml(pid, cid);
+  const fields = extractFromEditProjectHtml(fetched.html);
+
+  return {
+    ok: true,
+    projectId: pid,
+    companyId: cid,
+    editUrl: fetched.url,
+    fields,
+  };
+}
+
+function bindEditProjectPanel(panel) {
+  const pidEl = panel.querySelector('[data-x="pid"]');
+  const btnRun = panel.querySelector('[data-x="run"]');
+  const btnCopy = panel.querySelector('[data-x="copyLine"]');
+  const statusEl = panel.querySelector('[data-x="status"]');
+  const outPid = panel.querySelector('[data-x="outPid"]');
+  const outCid = panel.querySelector('[data-x="outCid"]');
+  const outName = panel.querySelector('[data-x="outName"]');
+  const outStatus = panel.querySelector('[data-x="outStatus"]');
+  const outSales = panel.querySelector('[data-x="outSales"]');
+  const outLink = panel.querySelector('[data-x="outLink"]');
+
+  let lastLine = "";
+
+  const setOut = (data) => {
+    outPid.textContent = data?.projectId ? "P" + data.projectId : "—";
+    outCid.textContent = data?.companyId || "—";
+    outName.textContent = data?.fields?.projectName || "—";
+    outStatus.textContent = data?.fields?.status || "—";
+    outSales.textContent = data?.fields?.salesBmby || "—";
+
+    const url = data?.editUrl || "";
+    if (url) {
+      outLink.href = url;
+      outLink.target = "_blank";
+      outLink.rel = "noopener";
+      outLink.textContent = "Link";
+    } else {
+      outLink.href = "#";
+      outLink.textContent = "—";
+    }
+
+    lastLine = `P${data?.projectId || ""} | CID=${data?.companyId || ""} | name=${data?.fields?.projectName || ""} | status=${data?.fields?.status || ""} | sales=${data?.fields?.salesBmby || ""}`.trim();
+  };
+
+  const run = async () => {
+    const pidIn = pidEl.value;
+    statusEl.textContent = "טוען...";
+    setOut(null);
+
+    try {
+      const data = await runEditProjectExtract(pidIn);
+      if (!data.ok) {
+        statusEl.textContent = `שגיאה: ${data.error || "ERROR"}`;
+        setOut(data);
+        toast(`❌ ${data.error || "ERROR"}`, "error");
+        return;
+      }
+      statusEl.textContent = "✅ נמצא.";
+      setOut(data);
+      toast("✅ נמצא", "ok");
+    } catch (e) {
+      
+      statusEl.textContent = "שגיאה (ראה קונסול)";
+      toast("❌ שגיאה", "error");
+    }
+  };
+
+  btnRun?.addEventListener("click", run);
+  pidEl?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") run();
+  });
+
+  btnCopy?.addEventListener("click", async () => {
+    if (!lastLine) return toast("אין מה להעתיק", "warn");
+    const ok = await copyToClipboard(lastLine);
+    toast(ok ? "✅ הועתק" : "⚠️ לא הועתק", ok ? "ok" : "warn");
+  });
+}
+
+/*****************************************************************
+ * PROJECTS BOARDS: highlight row by BoardProjectID
+ *****************************************************************/
+function renderBoardsPanel() {
+  return `
+    <div style="font:900 14px/1.2 var(--bmby-font);">הגדרות פרויקטים נדל״ן (ProjectsBoards)</div>
+    <div class="bmby-small">מזינים מספר פרויקט ➜ פותח את המסך ProjectsBoards ומדגיש את השורה לפי BoardProjectID.</div>
+
+    <div class="bmby-row" style="margin-top:10px; gap:8px; align-items:center;">
+      <input class="bmby-input" data-x="pid" placeholder="BoardProjectID (P1234 או 1234)" style="flex:1; min-width:160px;">
+      <button class="bmby-btn" data-x="open">פתח + צבע</button>
+      <button class="bmby-btn secondary" data-x="paintHere" title="צבע בעמוד הנוכחי (רק אם אתה כבר ב-ProjectsBoards)">צבע כאן</button>
+    </div>
+
+    <div class="bmby-small muted" style="margin-top:10px;" data-x="hint">טיפ: אם אתה כבר במסך ProjectsBoards, כפתור "צבע כאן" ידגיש בלי לפתוח טאב.</div>
+  `;
+}
+
+function pbNorm(s) {
+  return String(s || "")
+    .replace(/\u00a0/g, " ")
+    .replace(/[\s\u200e\u200f]+/g, " ")
+    .trim();
+}
+
+function pbClearHL() {
+  document.querySelectorAll(".bmbyPBHL").forEach((tr) => tr.classList.remove("bmbyPBHL"));
+}
+
+function pbEnsureCss() {
+  if (document.getElementById("bmbyPBHLStyle")) return;
+  const st = document.createElement("style");
+  st.id = "bmbyPBHLStyle";
+  st.textContent = `
+    .bmbyPBHL{
+      outline:3px solid rgba(0,140,255,.9) !important;
+      box-shadow:0 0 0 6px rgba(0,140,255,.18) !important;
+      background:rgba(255, 235, 140, .65) !important;
+    }
+    .bmbyPBHL td, .bmbyPBHL th{ background:transparent !important; }
+  `;
+  document.head.appendChild(st);
+}
+
+function pbFindHeaderCell(table) {
+  const rows = Array.from(table.querySelectorAll("tr"));
+  for (const tr of rows) {
+    const ths = Array.from(tr.querySelectorAll("th"));
+    for (const th of ths) {
+      if (pbNorm(th.textContent) === "BoardProjectID") return { tr, th };
+    }
+  }
+  return null;
+}
+
+function pbFindRow(pid) {
+  const tables = Array.from(document.querySelectorAll("table"));
+  for (const table of tables) {
+    const hdr = pbFindHeaderCell(table);
+    if (!hdr) continue;
+
+    const colIndex = hdr.th.cellIndex;
+    const allRows = Array.from(table.querySelectorAll("tr"));
+    const startIdx = allRows.indexOf(hdr.tr) + 1;
+
+    for (let i = Math.max(0, startIdx); i < allRows.length; i++) {
+      const tr = allRows[i];
+      const cells = Array.from(tr.children).filter((el) => el && (el.tagName === "TD" || el.tagName === "TH"));
+      const cell = cells[colIndex] || tr.children[colIndex];
+      if (cell && pbNorm(cell.textContent) === String(pid)) return tr;
+    }
+  }
+  return null;
+}
+
+function pbHighlight(pidInput) {
+  const pid = normalizePidLite(pidInput);
+  if (!pid) return { ok: false, error: "INVALID_PID" };
+
+  pbEnsureCss();
+  pbClearHL();
+
+  const row = pbFindRow(pid);
+  if (!row) return { ok: false, error: "NOT_FOUND" };
+
+  row.classList.add("bmbyPBHL");
+  try { row.scrollIntoView({ behavior: "smooth", block: "center" }); } catch {}
+  return { ok: true };
+}
+
+function bindBoardsPanel(panel) {
+  const pidEl = panel.querySelector('[data-x="pid"]');
+  const btnOpen = panel.querySelector('[data-x="open"]');
+  const btnPaint = panel.querySelector('[data-x="paintHere"]');
+  const hintEl = panel.querySelector('[data-x="hint"]');
+
+  const go = () => {
+    const pid = normalizePidLite(pidEl.value);
+    if (!pid) return toast("נא להזין מספר פרויקט", "warn");
+
+    // store for auto-highlight on the ProjectsBoards page (shared across tabs)
+    Store.set("pb_target_pid", pid);
+
+    // also pass via query string so refresh still works
+    const url = `${location.origin}/nihul/ProjectsBoards.php?BoardProjectID=${encodeURIComponent(pid)}`;
+    window.open(url, "_blank", "noopener");
+    toast("פותח ProjectsBoards + צביעה...", "info");
+  };
+
+  const paintHere = () => {
+    const pid = normalizePidLite(pidEl.value);
+    if (!pid) return toast("נא להזין מספר פרויקט", "warn");
+    const ok = pbHighlight(pid);
+    if (ok.ok) toast("✅ נצבע", "ok");
+    else toast("❌ לא נמצא", "error");
+  };
+
+  btnOpen?.addEventListener("click", go);
+  btnPaint?.addEventListener("click", paintHere);
+  pidEl?.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+
+  // If not on ProjectsBoards, hide "paint here" hint
+  const onPB = /\/nihul\/ProjectsBoards\.php/i.test(location.pathname);
+  if (!onPB) {
+    btnPaint.disabled = true;
+    hintEl.textContent = 'כפתור "צבע כאן" פעיל רק במסך ProjectsBoards עצמו.';
+  }
+}
+
+// Auto-highlight on ProjectsBoards if a target was set from dashboard
+function pbAutoHighlightFromStore() {
+  if (!/\/nihul\/ProjectsBoards\.php/i.test(location.pathname)) return;
+
+  // Prefer query param (survives refresh), fallback to Store.
+  let pid = null;
+  try {
+    const u = new URL(location.href);
+    pid = u.searchParams.get("BoardProjectID") || u.searchParams.get("ProjectID");
+  } catch {}
+  if (!pid) pid = Store.get("pb_target_pid", null);
+  if (!pid) return;
+
+  pid = normalizePidLite(pid);
+  if (!pid) return;
+
+  // We'll retry because tables can render a bit late.
+  const MAX_TRIES = 120;
+  const INTERVAL_MS = 250;
+  let tries = 0;
+
+  const tick = () => {
+    tries++;
+    const r = pbHighlight(pid);
+    if (r.ok) {
+      Store.set("pb_target_pid", null); // clear only on success
+      toast(`✅ נצבע: ${pid}`, "ok");
+      return;
+    }
+    if (tries >= MAX_TRIES) {
+      // clear to avoid re-trigger loops
+      Store.set("pb_target_pid", null);
+      toast(`❌ לא נמצא: ${pid}`, "error");
+      
+      return;
+    }
+    setTimeout(tick, INTERVAL_MS);
+  };
+
+  setTimeout(tick, 200);
+}
   function renderComingSoon(tabId) {
     const title =
       tabId === "passwords" ? "חיפוש סיסמאות" :
@@ -929,7 +1574,7 @@ function renderPasswordsPanel() {
         const pidDigits = pid;
         await findPasswordInInterfaces(pidDigits, pw, resEl);
       } catch (err) {
-        console.error("[BMBY PW]", err);
+        
         resEl.innerHTML = `<div class="bmby-small">❌ שגיאה בחיפוש (ייתכן שנדרש להתחבר מחדש)</div>`;
         toast("❌ שגיאה בחיפוש סיסמא", false);
       }
@@ -1633,7 +2278,7 @@ if (hasVal(base.domain) || hasVal(base.account) || hasVal(base.partition)) {
       addHistory("voip", pid);
       toast(copied ? "✅ Account הועתק ללוח" : "⚠️ לא הצלחתי להעתיק ללוח", copied ? "ok" : "warn");
     } catch (err) {
-      console.error(err);
+      
       toast("שגיאה בחיפוש VOIP (רקע) – פרטים בקונסול.", "error");
     }
   }
@@ -2531,4 +3176,11 @@ if (hasVal(base.domain) || hasVal(base.account) || hasVal(base.partition)) {
   const obs = new MutationObserver(addInterfacesLink);
   obs.observe(document.body,{childList:true,subtree:true});
   addInterfacesLink();
+  // Auto paint ProjectsBoards row if requested from dashboard
+  pbAutoHighlightFromStore();
+  if (/\/nihul\/ProjectsBoards\.php/i.test(location.pathname)) { setTimeout(pbAutoHighlightFromStore, 1200); setTimeout(pbAutoHighlightFromStore, 3500); }
+
 })();
+
+
+
