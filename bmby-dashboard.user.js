@@ -12,6 +12,8 @@
 // @match        http://voip2.bmby.com/ipbx/dialplan_edit.php*
 // @match        http://82.166.228.179/ipbx/dialplan_edit.php*
 // @match        http://82.166.228.180/ipbx/dialplan_edit.php*
+// @updateURL    https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
+// @downloadURL  https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
 // @connect      www.bmby.com
 // @connect      bmby.com
 // @connect      voip.bmby.com
