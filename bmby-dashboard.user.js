@@ -1,9 +1,11 @@
 // ==UserScript==
-// @name         BMBY Dashboard (PROD) – Nihul + IPBX
+// @name         BMBY Dashboard (PROD) v1.3.93 – Nihul + IPBX
 // @namespace    https://bmby.com/
-// @version      1.3.28
+// @version      1.3.93
 // @description  Unified PROD: Nihul dashboard + IPBX DID Helper (dialplan_edit.php).
 // @run-at       document-end
+// @updateURL    https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
+// @downloadURL  https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
 // @match        https://www.bmby.com/nihul/*
 // @match        https://bmby.com/nihul/*
 // @match        https://www.bmby.com/nihul/ProjectsBoards.php*
@@ -12,8 +14,6 @@
 // @match        http://voip2.bmby.com/ipbx/dialplan_edit.php*
 // @match        http://82.166.228.179/ipbx/dialplan_edit.php*
 // @match        http://82.166.228.180/ipbx/dialplan_edit.php*
-// @updateURL    https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
-// @downloadURL  https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
 // @connect      www.bmby.com
 // @connect      bmby.com
 // @connect      voip.bmby.com
@@ -25,6 +25,18 @@
 // @grant        GM_deleteValue
 // @grant        GM_xmlhttpRequest
 // ==/UserScript==
+
+// Global CSS.escape polyfill (shared across NIHUL + parsers)
+var cssEscape = (typeof CSS !== 'undefined' && CSS && typeof CSS.escape === 'function')
+  ? CSS.escape.bind(CSS)
+  : function (value) {
+      var str = String(value);
+      return str.replace(/[^a-zA-Z0-9_-]/g, function (ch) {
+        var hex = ch.codePointAt(0).toString(16).toUpperCase();
+        return "\\" + hex + " ";
+      });
+    };
+
 
 function __bootNIHUL_DASHBOARD__(){
   // -------------------- ProjectsBoards Auto-Highlight (embedded helper) --------------------
@@ -1214,6 +1226,9 @@ function __bootNIHUL_DASHBOARD__(){
           <div class="bmby-small muted">שם הפרויקט</div><div data-x="outName" style="font-weight:900;">—</div>
           <div class="bmby-small muted">סטאטוס</div><div data-x="outStatus" style="font-weight:900;">—</div>
           <div class="bmby-small muted">איש מכירות (Bmby)</div><div data-x="outSales" style="font-weight:900;">—</div>
+          <div class="bmby-small muted">תאריך סיום</div><div data-x="outDue" style="font-weight:900;">—</div>
+          <div class="bmby-small muted">רשיונות</div><div data-x="outLic" style="font-weight:900;">—</div>
+          <div class="bmby-small muted">משתמשים</div><div data-x="outUsers" style="font-weight:900;">—</div>
           <div class="bmby-small muted">EditProject</div><div><a href="#" data-x="outLink">Link</a></div>
         </div>
       </div>
@@ -1363,40 +1378,146 @@ function __bootNIHUL_DASHBOARD__(){
         return null;
       });
 
-    const doc = new DOMParser().parseFromString(String(html || ""), "text/html");
+  const doc = new DOMParser().parseFromString(String(html || ""), "text/html");
 
-    const projectName = normTextLite(doc.querySelector('input[name="Project"]')?.value) || null;
+  function getInputValueByNames(names){
+    for (const n of names) {
+      const el = doc.querySelector(`input[name="${cssEscape(n)}"], textarea[name="${cssEscape(n)}"]`);
+      if (el && normTextLite(el.value)) return normTextLite(el.value);
+      const sel = doc.querySelector(`select[name="${cssEscape(n)}"]`);
+      if (sel) {
+        const v = normTextLite(sel.options?.[sel.selectedIndex]?.textContent || sel.value);
+        if (v) return v;
+      }
+    }
+    return null;
+  }
 
-    const statusSelect = doc.querySelector('select[name="Active"]');
-    const status = statusSelect
-      ? normTextLite(statusSelect.options?.[statusSelect.selectedIndex]?.textContent || statusSelect.value)
-      : null;
+  function getValueFromRow(row){
+    if (!row) return null;
+    // Prefer readonly input
+    const ro = row.querySelector('input[readonly]');
+    if (ro && normTextLite(ro.value)) return normTextLite(ro.value);
 
-    // Sales: find row containing "איש מכירות" and take readonly input value in the row
-    let sales = null;
-    const cells = Array.from(doc.querySelectorAll("td,th"));
+    // Prefer normal input/select/textarea in the row (but skip hidden)
+    const any = row.querySelector('input:not([type="hidden"]), select, textarea');
+    if (any) {
+      const v = any.tagName === 'SELECT'
+        ? normTextLite(any.options?.[any.selectedIndex]?.textContent || any.value)
+        : normTextLite(any.value);
+      if (v) return v;
+    }
+
+    // Fallback: take text from the next TD
+    const tds = row.querySelectorAll('td,th');
+    if (tds && tds.length >= 2) {
+      // Usually label is first cell, value is second/third
+      for (let i=1;i<tds.length;i++){
+        const tx = normTextLite(tds[i].textContent);
+        if (tx) return tx;
+      }
+    }
+    return null;
+  }
+
+  function findValueByLabels(labels){
+    // Try direct row finder
+    for (const lab of labels) {
+      const row = __getRowFromAny(doc, lab);
+      const v = getValueFromRow(row);
+      if (v) return v;
+    }
+
+    // Try scanning cells and reading their row
+    const cells = Array.from(doc.querySelectorAll('td,th'));
     for (const c of cells) {
       const t = normTextLite(c.textContent);
       if (!t) continue;
-      if (!t.includes("איש מכירות")) continue;
-      const row = c.closest('tr') || __getRowFromAny(doc, 'איש מכירות') || __getRowFromAny(doc, t);
-      if (!row) continue;
-      // Prefer value in the same row (often in the next TD)
-      const ro = row.querySelector("input[readonly]");
-      if (ro && normTextLite(ro.value)) { sales = normTextLite(ro.value); break; }
-      const any = row.querySelector("input,select,textarea");
-      if (any) {
-        const v = any.tagName === "SELECT"
-          ? normTextLite(any.options?.[any.selectedIndex]?.textContent || any.value)
-          : normTextLite(any.value);
-        if (v) { sales = v; break; }
+      for (const lab of labels) {
+        if (t.includes(lab)) {
+          const row = c.closest('tr') || __getRowFromAny(doc, lab);
+          const v = getValueFromRow(row);
+          if (v) return v;
+        }
       }
     }
-
-    return { projectName, status, salesBmby: sales };
+    return null;
   }
 
-  async function fetchTextSmart(url) {
+  // Project name (multiple fallbacks)
+  const projectName =
+    getInputValueByNames(['Project', 'ProjectName', 'Title', 'ProjectTitle']) ||
+    normTextLite(doc.querySelector('input[name="Project"]')?.value) ||
+    normTextLite(doc.querySelector('input[name="Title"]')?.value) ||
+    normTextLite(doc.querySelector('h1')?.textContent) ||
+    null;
+
+  // Status (Active select)
+  const statusSelect = doc.querySelector('select[name="Active"]');
+  const status = statusSelect
+    ? normTextLite(statusSelect.options?.[statusSelect.selectedIndex]?.textContent || statusSelect.value)
+    : (getInputValueByNames(['Active']) || null);
+
+  // Sales / Contact (label-based; some environments call it "איש קשר" or "איש מכירות")
+  const sales = findValueByLabels([
+    'איש מכירות (Bmby)',
+    'איש מכירות',
+    'איש קשר (Bmby)',
+    'איש קשר',
+    'מנהל מכירות',
+  ]);
+
+
+  // Licenses (base + additional) from selects under EditProject
+  const baseSel = doc.querySelector('#NumberOfUsers, select[name="NumberOfUsers"]');
+  const addSel  = doc.querySelector('#AdditionNumberOfUsers, #AdditionNumberOfUsers, select[name="AdditionNumberOfUsers"], select[name="AdditionNumberOfUsers"]');
+
+  function getSelNum(sel){
+    if (!sel) return null;
+    const raw = String(sel.value || '').trim();
+    let n = parseInt(raw, 10);
+    if (!Number.isNaN(n)) return n;
+    const opt = sel.selectedOptions && sel.selectedOptions[0];
+    if (opt) {
+      const t = String(opt.value || opt.textContent || '').trim();
+      n = parseInt(t, 10);
+      if (!Number.isNaN(n)) return n;
+    }
+    return null;
+  }
+
+  const licenseBase = getSelNum(baseSel);
+  const licenseAdd  = getSelNum(addSel);
+  const licenseTotal = (licenseBase !== null || licenseAdd !== null)
+    ? ((licenseBase || 0) + (licenseAdd || 0))
+    : null;
+
+  // Due date (project end) – BMBY often splits to d_/m_/y_ fields
+  const dDue = getInputValueByNames(['d_DueDate']);
+  const mDue = getInputValueByNames(['m_DueDate']);
+  const yDue = getInputValueByNames(['y_DueDate']);
+
+  const pad2 = (n) => {
+    const v = String(n ?? "").trim();
+    if (!v) return "";
+    return v.length === 1 ? ("0" + v) : v;
+  };
+
+  const dueFromParts = (dDue && mDue && yDue)
+    ? `${pad2(dDue)}/${pad2(mDue)}/${String(yDue).trim()}`
+    : null;
+
+  const dueDate =
+    dueFromParts ||
+    getInputValueByNames(['d_DueDate', 'm_DueDate', 'y_DueDate', 'd_dueDate', 'm_dueDate', 'y_dueDate', 'DueDate']) ||
+    findValueByLabels(['תאריך סיום', 'תאריך יעד', 'Due Date', 'End Date']) ||
+    null;
+
+
+return { projectName, status, salesBmby: sales, dueDate, licenseBase, licenseAdd, licenseTotal };
+}
+
+async function fetchTextSmart(url) {
     // Robust Hebrew decode using GM_xmlhttpRequest(arraybuffer) when available.
     const hasGM = (typeof GM_xmlhttpRequest === "function");
     if (!hasGM) {
@@ -1513,9 +1634,126 @@ function __bootNIHUL_DASHBOARD__(){
     const outName = panel.querySelector('[data-x="outName"]');
     const outStatus = panel.querySelector('[data-x="outStatus"]');
     const outSales = panel.querySelector('[data-x="outSales"]');
+    const outDue   = panel.querySelector('[data-x="outDue"]');
+    const outLic = panel.querySelector('[data-x="outLic"]');
+    const outUsers = panel.querySelector('[data-x="outUsers"]');
     const outLink = panel.querySelector('[data-x="outLink"]');
 
     let lastLine = "";
+
+
+
+  async function fetchUsersCounts(companyId, projectId, onProgress){
+  const logPrefix = "[BMBY-UsersCount]";
+  const usersUrl = `/nihul/AddProject2.php?ProjectID=${encodeURIComponent(projectId)}&CompanyID=${encodeURIComponent(companyId)}&BrokerageProject=no`;
+  const samples = [];
+  const ids = [];
+  const totals = { total: 0, inactive: 0, active: 0, unknown: 0, fetchErrors: 0 };
+  let rawHit = false;
+
+  // 1) fetch Users page (AddProject2) HTML
+  let usersHtml = "";
+  try{
+    const r = await fetch(usersUrl, { credentials: "include" });
+    usersHtml = await r.text();
+    if(!r.ok) throw new Error(`users page status ${r.status}`);
+  }catch(e){
+    totals.fetchErrors++;
+    samples.push({ status:"users-page-fetch-error", note:String(e), usersUrl });
+    console.warn(logPrefix, "users page fetch error:", e);
+    return { ...totals, ids, samples, rawHit, usersUrl };
+  }
+
+  // 2) extract UserIDs from HTML (works even when there are no explicit EditUser links)
+  // Prefer explicit EditUser.php?UserID=... if exists, otherwise fallback to any UserID=... occurrences.
+  const seen = new Set();
+
+  // Explicit EditUser occurrences
+  for(const m of usersHtml.matchAll(/EditUser\.php\?[^"'<>]*\bUserID=(\d{3,})\b/gi)){
+    const id = m[1];
+    if(!seen.has(id)){ seen.add(id); ids.push(id); }
+  }
+
+  if(ids.length === 0){
+    // Fallback: raw UserID params anywhere in HTML
+    const raw = [];
+    for(const m of usersHtml.matchAll(/\bUserID=(\d{3,})\b/gi)) raw.push(m[1]);
+    // Also handle HTML-encoded '=' (rare)
+    for(const m of usersHtml.matchAll(/\bUserID&#0*61;(\d{3,})\b/gi)) raw.push(m[1]);
+
+    rawHit = raw.length > 0;
+    for(const id of raw){
+      if(!seen.has(id)){ seen.add(id); ids.push(id); }
+    }
+  }
+
+  totals.total = ids.length;
+
+  if(ids.length === 0){
+    samples.push({ status:"no-ids", note:"No UserID occurrences found on AddProject2 users page.", usersUrl, htmlLen: usersHtml.length });
+    console.warn(logPrefix, "No ids found.", { usersUrl, htmlLen: usersHtml.length });
+    return { ...totals, ids, samples, rawHit, usersUrl };
+  }
+
+  console.log(logPrefix, "Found ids total:", totals.total, "sample:", ids.slice(0,10));
+
+  // 3) scan each EditUser page HTML and look for class='notActive'
+  const CONCURRENCY = 8;
+  let idx = 0;
+
+  const hasDetails = (t) => /wrappUserDetails/i.test(t);
+  const hasNotActive = (t) => /class\s*=\s*["']notActive["']/i.test(t);
+
+  async function worker(){
+    while(true){
+      const my = idx++;
+      if(my >= ids.length) return;
+
+      const id = ids[my];
+      const url = `/preferences/EditUser.php?UserID=${encodeURIComponent(id)}&ProjectID=${encodeURIComponent(projectId)}&FromNihul=1`;
+
+      try{
+        const r = await fetch(url, { credentials:"include", redirect:"follow" });
+        const t = await r.text();
+
+        const detailsOk = hasDetails(t);
+        const inactive = detailsOk && hasNotActive(t);
+
+        if(!r.ok){
+          totals.fetchErrors++;
+          if(samples.length < 20) samples.push({ id, status:"fetch-error", http:r.status, url });
+        }else if(!detailsOk){
+          totals.unknown++;
+          if(samples.length < 20) samples.push({ id, status:"unknown", note:"No wrappUserDetails in response", len:t.length, url });
+        }else if(inactive){
+          totals.inactive++;
+          if(samples.length < 50) samples.push({ id, status:"inactive", len:t.length, url });
+        }else{
+          totals.active++;
+          if(samples.length < 20) samples.push({ id, status:"active", len:t.length, url });
+        }
+
+      }catch(e){
+        totals.fetchErrors++;
+        if(samples.length < 20) samples.push({ id, status:"fetch-exception", note:String(e), url });
+      }
+
+      if(typeof onProgress === "function"){
+        try{ onProgress({ ...totals, done: my+1, total: ids.length }); }catch(_){}
+      }
+    }
+  }
+
+  const workers = [];
+  for(let i=0;i<CONCURRENCY;i++) workers.push(worker());
+  await Promise.all(workers);
+
+  console.log(logPrefix, "Done:", { inactive: totals.inactive, active: totals.active, unknown: totals.unknown, fetchErrors: totals.fetchErrors });
+
+  return { ...totals, ids, samples, rawHit, usersUrl };
+}
+
+
 
     const setOut = (data) => {
       outPid.textContent = data?.projectId ? "P" + data.projectId : "—";
@@ -1523,6 +1761,25 @@ function __bootNIHUL_DASHBOARD__(){
       outName.textContent = data?.fields?.projectName || "—";
       outStatus.textContent = data?.fields?.status || "—";
       outSales.textContent = data?.fields?.salesBmby || "—";
+      if (outDue) outDue.textContent = data?.fields?.dueDate || "—";
+
+      const baseN = data?.fields?.licenseBase;
+      const addN = data?.fields?.licenseAdd;
+      const totN = data?.fields?.licenseTotal;
+      outLic.textContent = (totN !== null && totN !== undefined)
+        ? `${totN} (בסיס: ${baseN || 0} + נוספים: ${addN || 0})`
+        : "—";
+
+      const ut = data?.fields?.usersTotal;
+      const ua = data?.fields?.usersActive;
+      const ui = data?.fields?.usersInactive;
+      if (outUsers) {
+        if (outUsers) outUsers.textContent = (ut !== null && ut !== undefined)
+          ? `${ut} (פעילים: ${ua ?? "—"} | לא פעילים: ${ui ?? "—"})${(data?.fields?.usersRawHit ? " | rawHit: " + data.fields.usersRawHit : "")}${(data?.fields?.usersDebugSamples ? " | samples: " + data.fields.usersDebugSamples.length : "")}${(data?.fields?.usersUnknown ? " | לא ידוע: " + data.fields.usersUnknown : "")}${(data?.fields?.usersFetchErrors ? " | שגיאות: " + data.fields.usersFetchErrors : "")}${(data?.fields?.usersLimited ? " ⚠️ נסרקו רק " + data.fields.usersScanned : "")}`
+          : "—";
+      }
+
+
 
       const url = data?.editUrl || "";
       if (url) {
@@ -1535,7 +1792,7 @@ function __bootNIHUL_DASHBOARD__(){
         outLink.textContent = "—";
       }
 
-      lastLine = `P${data?.projectId || ""} | CID=${data?.companyId || ""} | name=${data?.fields?.projectName || ""} | status=${data?.fields?.status || ""} | sales=${data?.fields?.salesBmby || ""}`.trim();
+      lastLine = `P${data?.projectId || ""} | CID=${data?.companyId || ""} | name=${data?.fields?.projectName || ""} | status=${data?.fields?.status || ""} | sales=${data?.fields?.salesBmby || ""} | due=${data?.fields?.dueDate || ""} | licenses=${data?.fields?.licenseTotal ?? ""}`.trim();
     };
 
     const run = async () => {
@@ -1552,6 +1809,36 @@ function __bootNIHUL_DASHBOARD__(){
           return;
         }
         statusEl.textContent = "✅ נמצא.";
+        // Count users (AddProject2): total/active/inactive
+        try {
+          statusEl.textContent = "✅ נמצא. סופר משתמשים…";
+          const uc = await fetchUsersCounts(data.companyId, data.projectId, (st)=>{
+            try{
+              statusEl.textContent = `✅ נמצא. סופר משתמשים… ${st?.done ?? 0}/${st?.total ?? 0}`;
+              if (outUsers) {
+                const ina = st?.inactive ?? 0;
+                const unk = st?.unknown ?? 0;
+                const err = st?.fetchErrors ?? 0;
+                outUsers.textContent = `${n} (נסרק: ${i} | לא פעילים: ${ina} | לא ידוע: ${unk} | שגיאות: ${err})`;
+              }
+            }catch(e){}
+          });
+          statusEl.textContent = `✅ הושלם. (${uc?.total ?? 0} משתמשים)`;
+          data.fields = data.fields || {};
+          data.fields.usersTotal = uc.total;
+          data.fields.usersActive = uc.active;
+          data.fields.usersInactive = uc.inactive;
+          data.fields.usersUrl = uc.url;
+          data.fields.usersLimited = !!uc.limited;
+          data.fields.usersScanned = uc.scanned;
+          try { console.log('[BMBY-UsersCount] samples', uc.debugSamples); } catch(e) {}
+          data.fields.usersUnknown = uc.unknown;
+          data.fields.usersFetchErrors = uc.fetchErrors;
+          data.fields.usersRawHit = uc.rawHit;
+          data.fields.usersDebugSamples = uc.debugSamples;
+        } catch(e) {
+          console.error("[BMBY-UsersCount]", e);
+        }
         setOut(data);
         toast("✅ נמצא", "ok");
       } catch (e) {
@@ -1572,6 +1859,9 @@ function __bootNIHUL_DASHBOARD__(){
       toast(ok ? "✅ הועתק" : "⚠️ לא הועתק", ok ? "ok" : "warn");
     });
   }
+
+
+
 
   /*****************************************************************
    * PROJECTS BOARDS: highlight row by BoardProjectID
@@ -3823,7 +4113,7 @@ function __bootNIHUL_DASHBOARD__(){
     obs.observe(document.body,{childList:true,subtree:true});
     addInterfacesLink();
     // Auto paint ProjectsBoards row if requested from dashboard
-    pbAutoHighlightFromStore();
+    try { if (typeof pbAutoHighlightFromStore === 'function') if (typeof pbAutoHighlightFromStore==='function') pbAutoHighlightFromStore(); } catch(e) {}
     if (/\/nihul\/ProjectsBoards\.php/i.test(location.pathname)) { setTimeout(pbAutoHighlightFromStore, 1200); setTimeout(pbAutoHighlightFromStore, 3500); }
 
 
@@ -3849,7 +4139,7 @@ function __bootNIHUL_DASHBOARD__(){
 
 
     // Auto highlight on Users page if coming from global UserID scan
-    maybeAutoHighlightGlobalUid();
+    if (typeof maybeAutoHighlightGlobalUid==='function') maybeAutoHighlightGlobalUid();
   })();
 
 
@@ -3902,6 +4192,25 @@ function __bootNIHUL_DASHBOARD__(){
 function __bootIPBX_DID_HELPER__(){
   (function () {
     'use strict';
+  try { console.log('%c[BMBY PROD] loaded v1.3.68','background:#222;color:#bada55;padding:2px 6px;border-radius:4px'); } catch(e) {}
+
+  // Visible runtime marker
+  try { console.log('[BMBY PROD] loaded v1.3.68'); } catch(e) {}
+  try { (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window).__BMBY_DASH_VER = '1.3.68'; } catch(e) {}
+
+
+  // CSS.escape polyfill (needed for safe querySelector on dynamic IDs/names)
+  const cssEscape = (typeof CSS !== 'undefined' && CSS && typeof CSS.escape === 'function')
+    ? CSS.escape
+    : function (value) {
+        const str = String(value);
+        // Minimal but safe escaper for CSS selectors
+        return str.replace(/[^a-zA-Z0-9_-]/g, function (ch) {
+          const hex = ch.codePointAt(0).toString(16).toUpperCase();
+          return "\\%s ".replace("%s", hex);
+        });
+      };
+
 
     const LOG = (...a) => console.log('[BMBY-IPBX]', ...a);
     const ERR = (...a) => console.error('[BMBY-IPBX]', ...a);
@@ -3941,7 +4250,12 @@ function __bootIPBX_DID_HELPER__(){
           th { font-weight: bold; background: #f7f7f7; }
         </style>`;
       const head = headers.map(h => `<th>${escHtml(h)}</th>`).join('');
-      const body = rows.map(r => `<tr>${r.map(v => `<td>${escHtml(v)}</td>`).join('')}</tr>`).join('');
+      const body = rows.map(r => `<tr>${r.map(v => `<td>${escHtml(v)}</td>`).join('')}</tr>
+              <tr>
+                <td class="bmby-k">משתמשים</td>
+                <td class="bmby-v"><span data-x="outUsers">—</span></td>
+              </tr>
+`).join('');
       const html = `<!doctype html><html><head><meta charset="utf-8">${css}</head><body><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></body></html>`;
       downloadText(filename, html, 'application/vnd.ms-excel');
     }
@@ -4652,8 +4966,8 @@ function applyFilter(qRaw) {
   const path = location.pathname || '';
   const isNihul = path.startsWith('/nihul/') && (host === 'www.bmby.com' || host === 'bmby.com');
   const isIPBX = (path === '/ipbx/dialplan_edit.php') && (host === 'voip.bmby.com' || host === 'voip2.bmby.com' || host === '82.166.228.179' || host === '82.166.228.180');
-  if (isNihul) { try { __bootNIHUL_DASHBOARD__(); } catch(e){ console.error('[BMBY PROD] NIHUL boot error', e); } return; }
-  if (isIPBX) { try { __bootIPBX_DID_HELPER__(); } catch(e){ console.error('[BMBY PROD] IPBX boot error', e); } return; }
+  if (isNihul) { try { __bootNIHUL_DASHBOARD__(); } catch(e){ console.error('[BMBY PROD] NIHUL boot error', e); } /* no-return */ }
+  if (isIPBX) { try { __bootIPBX_DID_HELPER__(); } catch(e){ console.error('[BMBY PROD] IPBX boot error', e); } /* no-return */ }
 })();
 
 
@@ -4755,3 +5069,260 @@ function applyFilter(qRaw) {
   mo.observe(document.documentElement, { childList:true, subtree:true });
   scan();
 })();
+
+
+/***********************
+ * BMBY-UsersCount (stable)
+ * - Counts users + detects inactive users by fetching each EditUser page
+ * - IMPORTANT: must use FromNihul=1 to get full page content (wrappUserDetails / notActive)
+ ***********************/
+(() => {
+  "use strict";
+
+  const UC_VER = "1.3.81";
+
+  const log = (...a) => console.log("[BMBY-UsersCount]", ...a);
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+  function getQueryParam(name) {
+    try { return new URL(location.href).searchParams.get(name); } catch { return null; }
+  }
+
+  function pickProjectAndCompanyFromDashboardFallback() {
+    // Try to read from the EditProject tool input (where you type ProjectID)
+    // This avoids relying on URL query params (Wizard pages often don't have ProjectID/CompanyID).
+    const pid =
+      document.querySelector('input[data-x="pid"]')?.value?.trim() ||
+      document.querySelector('input[name="ProjectID"]')?.value?.trim() ||
+      "";
+    const cid =
+      document.querySelector('input[data-x="cid"]')?.value?.trim() ||
+      document.querySelector('input[name="CompanyID"]')?.value?.trim() ||
+      "";
+
+    return {
+      projectId: pid || null,
+      companyId: cid || null,
+    };
+  }
+
+  function extractUserIdsFromAddProject2Html(html) {
+    const out = new Set();
+
+    // Common patterns we saw:
+    // 1) ...EditUser.php?UserID=57076...
+    // 2) ...EditUser_objectID=9681&FromNihul=1... (sometimes appears in openwindow javascript)
+    // We'll mainly use UserID.
+
+  async function extractUserIdsViaIframe(usersUrlAbs, timeoutMs = 12000) {
+    // Same-origin only. Used when the Users page is rendered by JS and fetch() HTML doesn't include the links.
+    return new Promise((resolve) => {
+      let done = false;
+      const iframe = document.createElement('iframe');
+
+      const finish = (ids) => {
+        if (done) return;
+        done = true;
+        try { iframe.remove(); } catch (_) {}
+        resolve(Array.isArray(ids) ? ids : []);
+      };
+
+      iframe.style.position = 'fixed';
+      iframe.style.left = '-99999px';
+      iframe.style.top = '-99999px';
+      iframe.style.width = '1px';
+      iframe.style.height = '1px';
+      iframe.style.opacity = '0';
+      iframe.style.pointerEvents = 'none';
+      iframe.setAttribute('aria-hidden', 'true');
+
+      const to = setTimeout(() => finish([]), timeoutMs);
+
+      iframe.onload = async () => {
+        clearTimeout(to);
+        try {
+          // give the page a bit of time to run its JS and render the list
+          await new Promise(r => setTimeout(r, 1500));
+
+          const doc = iframe.contentDocument;
+          if (!doc) return finish([]);
+
+          const parts = [];
+          doc.querySelectorAll('a[href], [onclick*="EditUser"]').forEach((el) => {
+            const h = el.getAttribute('href') || '';
+            const o = el.getAttribute('onclick') || '';
+            if (h) parts.push(h);
+            if (o) parts.push(o);
+          });
+
+          const big = parts.join('\n');
+          const ids = [];
+          const re = /EditUser\.php\?[^\s"'<>]*?UserID=(\d+)/gi;
+          let mm;
+          while ((mm = re.exec(big))) ids.push(mm[1]);
+
+          finish(Array.from(new Set(ids)));
+        } catch (e) {
+          console.warn('[BMBY-UsersCount] iframe extract failed', e);
+          finish([]);
+        }
+      };
+
+      iframe.src = usersUrlAbs;
+      document.documentElement.appendChild(iframe);
+    });
+  }
+
+  const reUserId = /EditUser\.php\?UserID=(\d+)/g;
+    let m;
+    while ((m = reUserId.exec(html))) out.add(m[1]);
+
+    // Fallback: some pages might embed "UserID=123" without the full EditUser.php prefix
+    if (out.size === 0) {
+      const reLoose = /\bUserID=(\d+)\b/g;
+      while ((m = reLoose.exec(html))) out.add(m[1]);
+    }
+
+    return Array.from(out);
+  }
+
+  function classifyEditUserHtml(htmlText) {
+    // Use DOM parsing for robustness (entities, spacing, etc.)
+    try {
+      const doc = new DOMParser().parseFromString(htmlText, "text/html");
+
+      const wrap = doc.querySelector(".wrappUserDetails");
+      const inactiveEl = doc.querySelector(".wrappUserDetails .notActive, .fixedHeaderWrapp .notActive, .notActive");
+
+      if (!wrap) {
+        // Usually means we didn't get the full EditUser page (e.g. missing FromNihul=1 or got a short/other page)
+        return { status: "unknown", reason: "no_wrappUserDetails" };
+      }
+
+      if (inactiveEl) return { status: "inactive", reason: "has_notActive" };
+      return { status: "active", reason: "no_notActive" };
+    } catch (e) {
+      return { status: "unknown", reason: "domparse_failed" };
+    }
+  }
+
+  async function fetchText(url, timeoutMs = 12000) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const r = await fetch(url, { credentials: "include", redirect: "follow", signal: ctrl.signal });
+      const txt = await r.text();
+      return { ok: true, status: r.status, finalUrl: r.url, text: txt };
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  async function scanUsersInactive(opts = {}) {
+    const projectId =
+      String(opts.projectId || "").trim() ||
+      getQueryParam("ProjectID") ||
+      pickProjectAndCompanyFromDashboardFallback().projectId;
+
+    const companyId =
+      String(opts.companyId || "").trim() ||
+      getQueryParam("CompanyID") ||
+      pickProjectAndCompanyFromDashboardFallback().companyId;
+
+    if (!projectId || !companyId) {
+      log("Missing ProjectID/CompanyID. Provide opts {projectId, companyId} or run from a page that has them in URL.");
+      return { total: 0, active: 0, inactive: 0, unknown: 0, fetchErrors: 0, ids: [], samples: [] };
+    }
+
+    const addProjectUrl = `/nihul/AddProject2.php?ProjectID=${encodeURIComponent(projectId)}&CompanyID=${encodeURIComponent(companyId)}&BrokerageProject=no`;
+    const addRes = await fetchText(addProjectUrl, 15000);
+    if (!addRes.ok) {
+      log("Failed to fetch AddProject2:", addRes.error);
+      return { total: 0, active: 0, inactive: 0, unknown: 0, fetchErrors: 1, ids: [], samples: [{status:"fetch_error", where:"AddProject2", error:addRes.error}] };
+    }
+
+    const ids = extractUserIdsFromAddProject2Html(addRes.text);
+    const total = ids.length;
+
+    const MAX_SCAN = Number.isFinite(opts.maxScan) ? Math.max(0, opts.maxScan) : 250;
+    const list = ids.slice(0, Math.min(total, MAX_SCAN));
+
+    const CONC = Number.isFinite(opts.concurrency) ? Math.max(1, opts.concurrency) : 6;
+
+    let inactive = 0, active = 0, unknown = 0, fetchErrors = 0;
+    const samples = [];
+    const resultsById = {};
+
+    let idx = 0;
+    async function worker(wi) {
+      while (idx < list.length) {
+        const myIdx = idx++;
+        const userId = list[myIdx];
+
+        const url = `/preferences/EditUser.php?UserID=${encodeURIComponent(userId)}&ProjectID=${encodeURIComponent(projectId)}&FromNihul=1`;
+
+        const res = await fetchText(url, 15000);
+        if (!res.ok) {
+          fetchErrors++;
+          resultsById[userId] = { userId, status: "fetch_error", error: res.error };
+          if (samples.length < 10) samples.push(resultsById[userId]);
+          continue;
+        }
+
+        const cls = classifyEditUserHtml(res.text);
+        const row = { userId, status: cls.status, reason: cls.reason, len: res.text.length };
+
+        resultsById[userId] = row;
+
+        if (cls.status === "inactive") inactive++;
+        else if (cls.status === "active") active++;
+        else unknown++;
+
+        // Record samples: first 5 + all inactive + any unknown/fetch_error (up to a cap)
+        if (samples.length < 5 || cls.status !== "active") {
+          if (samples.length < 25) samples.push(row);
+        }
+
+        if (typeof opts.onProgress === "function") {
+          try {
+            opts.onProgress({
+              done: myIdx + 1,
+              total: list.length,
+              active, inactive, unknown, fetchErrors,
+              lastUserId: userId,
+              lastStatus: cls.status,
+            });
+          } catch {}
+        }
+
+        // small jitter to reduce server stress
+        await sleep(120 + Math.floor(Math.random() * 120));
+      }
+    }
+
+    const workers = Array.from({ length: CONC }, (_, wi) => worker(wi));
+    await Promise.all(workers);
+
+    return { total, scanned: list.length, active, inactive, unknown, fetchErrors, ids, samples, projectId, companyId };
+  }
+
+  window.BMBY_scanUsersInactive = scanUsersInactive;
+
+  // Hook: if the dashboard defines runUsersCount(projectId, companyId), keep args and forward them.
+  if (typeof window.runUsersCount === "function") {
+    const prev = window.runUsersCount;
+    window.runUsersCount = async function (projectId, companyId) {
+      // If caller passes args, use them. Otherwise fallback to old behavior.
+      const res = await window.BMBY_scanUsersInactive({ projectId, companyId });
+      return res;
+    };
+    window.runUsersCount._bmbyUsersCountWrapped = true;
+    window.runUsersCount._bmbyUsersCountVer = UC_VER;
+    window.runUsersCount._bmbyUsersCountPrev = prev;
+  }
+
+  log(`loaded v${UC_VER}`);
+})();;
+
