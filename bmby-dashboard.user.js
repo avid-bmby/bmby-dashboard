@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         BMBY Dashboard (PROD) v1.3.93 – Nihul + IPBX
+// @name         BMBY Dashboard (PROD) v1.4.29 – Nihul + IPBX MAINWORKING + Dictionary + Partition Prefix + Users Scan + Pause/Resume
 // @namespace    https://bmby.com/
-// @version      1.3.93
-// @description  Unified PROD: Nihul dashboard + IPBX DID Helper (dialplan_edit.php).
+// @version      1.4.29
+// @description  Unified PROD: Nihul dashboard + IPBX DID Helper + Dictionary Search + IPBX Partition Prefix Search + users scan + working links list + pause/resume + version sync.
 // @run-at       document-end
 // @updateURL    https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
 // @downloadURL  https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
@@ -14,6 +14,18 @@
 // @match        http://voip2.bmby.com/ipbx/dialplan_edit.php*
 // @match        http://82.166.228.179/ipbx/dialplan_edit.php*
 // @match        http://82.166.228.180/ipbx/dialplan_edit.php*
+// @match        http://voip.bmby.com/ipbx/partition_selection.php*
+// @match        http://voip2.bmby.com/ipbx/partition_selection.php*
+// @match        http://82.166.228.179/ipbx/partition_selection.php*
+// @match        http://82.166.228.180/ipbx/partition_selection.php*
+// @match        http://voip.bmby.com/ipbx/users_edit.php*
+// @match        http://voip2.bmby.com/ipbx/users_edit.php*
+// @match        http://82.166.228.179/ipbx/users_edit.php*
+// @match        http://82.166.228.180/ipbx/users_edit.php*
+// @match        http://voip.bmby.com/ipbx/users.php*
+// @match        http://voip2.bmby.com/ipbx/users.php*
+// @match        http://82.166.228.179/ipbx/users.php*
+// @match        http://82.166.228.180/ipbx/users.php*
 // @connect      www.bmby.com
 // @connect      bmby.com
 // @connect      voip.bmby.com
@@ -24,6 +36,7 @@
 // @grant        GM_setValue
 // @grant        GM_deleteValue
 // @grant        GM_xmlhttpRequest
+// @require      https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js
 // ==/UserScript==
 
 // Global CSS.escape polyfill (shared across NIHUL + parsers)
@@ -323,7 +336,16 @@ function __bootNIHUL_DASHBOARD__(){
     "use strict";
 
 
-    const BMBY_GLOBAL_UID_TO_HIGHLIGHT = "BMBY_GLOBAL_UID_TO_HIGHLIGHT";
+
+  // --- SAFETY: remove any leftover GLOBAL ADMIN UI (from old scripts) ---
+  try {
+    const ids = ["bmby-admin-controls", "bmby-admin-run-btn", "bmby-admin-status-box"];
+    for (const id of ids) {
+      const el = document.getElementById(id);
+      if (el) el.remove();
+    }
+  } catch (e) {}
+const BMBY_GLOBAL_UID_TO_HIGHLIGHT = "BMBY_GLOBAL_UID_TO_HIGHLIGHT";
 
     function getGlobalUidToHighlight(){
       try{
@@ -1099,6 +1121,7 @@ function __bootNIHUL_DASHBOARD__(){
       { id: "users", label: "משתמשים" },
       { id: "editproject", label: "פרויקט" },
       { id: "boards", label: "Boards" },
+      { id: "dictionary", label: "מילון" },
     ];
 
     function buildDashboard() {
@@ -1193,6 +1216,7 @@ function __bootNIHUL_DASHBOARD__(){
       else if (tabId === "users") panel.innerHTML = renderUsersPanel();
       else if (tabId === "editproject") panel.innerHTML = renderEditProjectPanel();
       else if (tabId === "boards") panel.innerHTML = renderBoardsPanel();
+      else if (tabId === "dictionary") panel.innerHTML = renderDictionaryPanel();
       else panel.innerHTML = renderComingSoon(tabId);
 
       if (tabId === "voip") bindVoipPanel(panel);
@@ -1201,6 +1225,7 @@ function __bootNIHUL_DASHBOARD__(){
       if (tabId === "users") bindUsersPanel(panel);
       if (tabId === "editproject") bindEditProjectPanel(panel);
       if (tabId === "boards") bindBoardsPanel(panel);
+      if (tabId === "dictionary") bindDictionaryPanel(panel);
     }
 
 
@@ -1218,11 +1243,39 @@ function __bootNIHUL_DASHBOARD__(){
         <button class="bmby-btn secondary" data-x="copyLine" title="העתק שורה קצרה">Copy</button>
       </div>
 
+      <div class="bmby-row" style="margin-top:8px; gap:8px; align-items:center;">
+        <input class="bmby-input" data-x="cid" placeholder="CompanyID (לסריקה)" style="flex:1; min-width:140px;">
+        <button class="bmby-btn" data-x="scanCompany" title="סרוק את כל הפרויקטים של החברה">סרוק חברה</button>
+        <button class="bmby-btn danger" data-x="stopCompany" title="עצור סריקה" disabled>STOP</button>
+        <button class="bmby-btn secondary" data-x="exportCompany" title="ייצוא לאקסל (XLSX)" disabled>Export XLSX</button>
+      </div>
+
+      <div class="bmby-card" style="margin-top:10px; padding:10px;">
+        <div class="bmby-small muted" style="margin-bottom:6px;">תוצאות סריקת חברה</div>
+        <div data-x="scanWrap" style="max-height:220px; overflow:auto; border:1px solid rgba(255,255,255,.08); border-radius:10px;">
+          <table data-x="scanTable" style="width:100%; border-collapse:collapse; font:700 12px/1.35 var(--bmby-font);">
+            <thead>
+              <tr style="position:sticky; top:0; background:rgba(0,0,0,.25); backdrop-filter: blur(6px);">
+                <th style="text-align:right; padding:6px 8px; border-bottom:1px solid rgba(255,255,255,.08);">Project</th>
+                <th style="text-align:right; padding:6px 8px; border-bottom:1px solid rgba(255,255,255,.08);">שם פרויקט</th>
+                <th style="text-align:right; padding:6px 8px; border-bottom:1px solid rgba(255,255,255,.08);">רשיונות</th>
+                <th style="text-align:right; padding:6px 8px; border-bottom:1px solid rgba(255,255,255,.08);">משתמשים</th>
+                <th style="text-align:right; padding:6px 8px; border-bottom:1px solid rgba(255,255,255,.08);">מצב</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      </div>
+
       <div class="bmby-card" style="margin-top:10px; padding:10px;">
         <div class="bmby-small muted" data-x="status">מוכן.</div>
         <div style="margin-top:8px; display:grid; grid-template-columns:140px 1fr; gap:6px 10px;">
           <div class="bmby-small muted">ProjectID</div><div data-x="outPid" style="font-weight:900;">—</div>
           <div class="bmby-small muted">CompanyID</div><div data-x="outCid" style="font-weight:900;">—</div>
+          <div class="bmby-small muted">שם חברה</div><div data-x="outCompany" style="font-weight:900;">—</div>
           <div class="bmby-small muted">שם הפרויקט</div><div data-x="outName" style="font-weight:900;">—</div>
           <div class="bmby-small muted">סטאטוס</div><div data-x="outStatus" style="font-weight:900;">—</div>
           <div class="bmby-small muted">איש מכירות (Bmby)</div><div data-x="outSales" style="font-weight:900;">—</div>
@@ -1340,28 +1393,52 @@ function __bootNIHUL_DASHBOARD__(){
       .trim();
   }
 
-  async function fetchCompanyIdForPid_Wizard(pid) {
-    // Same logic as VOIP: Wizard.php?q=P#### then find onclick containing FindedProjects=pid and CompanyID=
+
+
+async function fetchCompanyIdForPid_Wizard(pid) {
     const q = "P" + String(pid);
     const url = location.origin + "/nihul/Wizard.php?q=" + encodeURIComponent(q);
-    const res = await fetch(url, { credentials: "include" });
-    if (!res.ok) throw new Error("Wizard fetch failed: " + res.status);
-    const html = await res.text();
+    const html = await fetchTextSmart(url);
     const doc = new DOMParser().parseFromString(html, "text/html");
 
-    const tds = Array.from(doc.querySelectorAll("td[onclick]"));
-    const td = tds.find((x) => {
-      const oc = x.getAttribute("onclick") || "";
-      return oc.includes("Wizard.php") && oc.includes("CompanyID=") && oc.includes("FindedProjects=") && oc.includes(String(pid));
-    });
-    if (!td) return null;
+    const norm = (s) => String(s || "")
+      .replace(/[\s\u00a0\u200e\u200f]+/g, " ")
+      .trim();
 
-    const oc = td.getAttribute("onclick") || "";
-    const mm = oc.match(/CompanyID=(\d+)/i);
-    return mm ? mm[1] : null;
+    // There may be multiple TDs with the same onclick (name cell + icon cells).
+    const tds = Array.from(doc.querySelectorAll("td[onclick]"));
+    const matches = tds.filter((x) => {
+      const oc = x.getAttribute("onclick") || "";
+      return oc.includes("Wizard.php") &&
+             oc.includes("CompanyID=") &&
+             oc.includes("FindedProjects=") &&
+             oc.includes(String(pid));
+    });
+
+    if (!matches.length) return { companyId: null, companyName: null };
+
+    // CompanyID from any matched onclick
+    const oc0 = matches[0].getAttribute("onclick") || "";
+    const mm = oc0.match(/CompanyID=(\d+)/i);
+    const companyId = mm ? mm[1] : null;
+
+    // Choose the best cell for company name: prefer Hebrew letters, then longest meaningful text.
+    const scoreCell = (td) => {
+      const raw = norm(td.textContent);
+      if (!raw) return -1e9;
+      if (/^\d+$/.test(raw)) return -1e6; // pure index
+      const heb = (raw.match(/[\u0590-\u05FF]/g) || []).length;
+      return heb * 20 + raw.length; // heb dominates
+    };
+
+    const bestTd = matches.slice().sort((a,b)=>scoreCell(b)-scoreCell(a))[0];
+    const bestText = norm(bestTd?.textContent);
+    const companyName = (bestText && !/^\d+$/.test(bestText)) ? bestText : null;
+
+    return { companyId, companyName };
   }
 
-  function extractFromEditProjectHtml(html) {
+function extractFromEditProjectHtml(html) {
   // Compatibility: in some builds bmbyGetRowFromAny is not attached to parser window (c.*)
   const __getRowFromAny = (typeof window !== 'undefined' && typeof window.bmbyGetRowFromAny === 'function')
     ? function(root, label){ return window.bmbyGetRowFromAny(root, label); }
@@ -1609,7 +1686,9 @@ async function fetchTextSmart(url) {
   async function runEditProjectExtract(pidInput) {
     const pid = normalizePidLite(pidInput);
     if (!pid) throw new Error("INVALID_PID");
-    const cid = await fetchCompanyIdForPid_Wizard(pid);
+    const wiz = await fetchCompanyIdForPid_Wizard(pid);
+    const cid = wiz?.companyId;
+    const companyName = wiz?.companyName;
     if (!cid) return { ok: false, projectId: pid, companyId: null, error: "NO_COMPANYID" };
 
     const fetched = await fetchEditProjectHtml(pid, cid);
@@ -1617,6 +1696,7 @@ async function fetchTextSmart(url) {
 
     return {
       ok: true,
+      companyName,
       projectId: pid,
       companyId: cid,
       editUrl: fetched.url,
@@ -1628,9 +1708,16 @@ async function fetchTextSmart(url) {
     const pidEl = panel.querySelector('[data-x="pid"]');
     const btnRun = panel.querySelector('[data-x="run"]');
     const btnCopy = panel.querySelector('[data-x="copyLine"]');
+    const cidEl = panel.querySelector('[data-x="cid"]');
+    const btnScanCompany = panel.querySelector('[data-x="scanCompany"]');
+    const btnExportCompany = panel.querySelector('[data-x="exportCompany"]');
+    const btnStopCompany = panel.querySelector('[data-x="stopCompany"]');
+    const scanTable = panel.querySelector('[data-x="scanTable"]');
+    const scanTbody = scanTable ? scanTable.querySelector("tbody") : null;
     const statusEl = panel.querySelector('[data-x="status"]');
     const outPid = panel.querySelector('[data-x="outPid"]');
     const outCid = panel.querySelector('[data-x="outCid"]');
+    const outCompany = panel.querySelector('[data-x="outCompany"]');
     const outName = panel.querySelector('[data-x="outName"]');
     const outStatus = panel.querySelector('[data-x="outStatus"]');
     const outSales = panel.querySelector('[data-x="outSales"]');
@@ -1640,8 +1727,43 @@ async function fetchTextSmart(url) {
     const outLink = panel.querySelector('[data-x="outLink"]');
 
     let lastLine = "";
+    let lastCompanyScan = [];
+    let cancelCompanyScan = false;
 
+    function escapeCsv(v){
+      const s = String(v ?? "");
+      if (/[",\n\r]/.test(s)) return "\"" + s.replace(/"/g, '""') + "\"";
+      return s;
+    }
 
+    function downloadCsv(filename, rows){
+      const bom = "\ufeff";
+      const csv = rows.map(r=>r.map(escapeCsv).join(",")).join("\r\n");
+      const blob = new Blob([bom + csv], {type:"text/csv;charset=utf-8"});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url), 1500);
+    }
+
+    function renderScanRows(list){
+      if (!scanTbody) return;
+      scanTbody.innerHTML = "";
+      for (const r of list){
+        const tr = document.createElement("tr");
+        const td = (t)=>{ const x=document.createElement("td"); x.style.textAlign="right"; x.style.padding="6px 8px"; x.style.borderBottom="1px solid rgba(255,255,255,.06)"; x.textContent=t; return x; };
+        tr.appendChild(td(String(r.projectId||"")));
+        tr.appendChild(td(String(r.projectName||"")));
+        tr.appendChild(td(String(r.licenseTotal??"")));
+        tr.appendChild(td(String(r.usersTotal??"")));
+        tr.appendChild(td(r.flag==="RED" ? "🚨" : "🟢"));
+        scanTbody.appendChild(tr);
+      }
+    }
 
   async function fetchUsersCounts(companyId, projectId, onProgress){
   const logPrefix = "[BMBY-UsersCount]";
@@ -1758,6 +1880,7 @@ async function fetchTextSmart(url) {
     const setOut = (data) => {
       outPid.textContent = data?.projectId ? "P" + data.projectId : "—";
       outCid.textContent = data?.companyId || "—";
+      if (outCompany) outCompany.textContent = data?.companyName || "—";
       outName.textContent = data?.fields?.projectName || "—";
       outStatus.textContent = data?.fields?.status || "—";
       outSales.textContent = data?.fields?.salesBmby || "—";
@@ -1778,6 +1901,46 @@ async function fetchTextSmart(url) {
           ? `${ut} (פעילים: ${ua ?? "—"} | לא פעילים: ${ui ?? "—"})${(data?.fields?.usersRawHit ? " | rawHit: " + data.fields.usersRawHit : "")}${(data?.fields?.usersDebugSamples ? " | samples: " + data.fields.usersDebugSamples.length : "")}${(data?.fields?.usersUnknown ? " | לא ידוע: " + data.fields.usersUnknown : "")}${(data?.fields?.usersFetchErrors ? " | שגיאות: " + data.fields.usersFetchErrors : "")}${(data?.fields?.usersLimited ? " ⚠️ נסרקו רק " + data.fields.usersScanned : "")}`
           : "—";
       }
+
+
+
+      // 🚨 License vs TOTAL Users indicator (Active + Inactive)
+      try{
+        const lic = (totN !== null && totN !== undefined) ? Number(totN) : null;
+
+        const totalUsersNum =
+          (ut !== null && ut !== undefined && String(ut).match(/\d+/))
+            ? Number(String(ut).match(/\d+/)[0])
+            : null;
+
+        // reset styles
+        if (outLic) {
+          outLic.style.color = "";
+          outLic.title = "";
+        }
+        if (outUsers) {
+          outUsers.title = "";
+        }
+
+        if (lic !== null && !Number.isNaN(lic) &&
+            totalUsersNum !== null && !Number.isNaN(totalUsersNum) &&
+            lic < totalUsersNum){
+
+          if (outLic) {
+            outLic.style.color = "var(--bmby-danger)";
+            outLic.title = `אזהרה: רשיונות (${lic}) קטן מסך המשתמשים (${totalUsersNum})`;
+            if (!String(outLic.textContent || "").includes("🚨")) {
+              outLic.textContent = "🚨 " + outLic.textContent;
+            }
+          }
+
+          if (outUsers && !String(outUsers.textContent || "").includes("🚨")) {
+            outUsers.textContent = outUsers.textContent + " 🚨";
+            outUsers.title = `אזהרה: סך המשתמשים (${totalUsersNum}) גדול ממספר הרשיונות (${lic})`;
+          }
+        }
+
+      }catch(e){}
 
 
 
@@ -1848,7 +2011,194 @@ async function fetchTextSmart(url) {
       }
     };
 
-    btnRun?.addEventListener("click", run);
+
+    async function scanCompanyFlow(){
+      const cid = normDigits(cidEl ? cidEl.value : "");
+      if (!cid) { statusEl.textContent = "❌ CompanyID לא תקין."; return; }
+
+      cancelCompanyScan = false;
+      if (btnScanCompany) btnScanCompany.disabled = true;
+      if (btnStopCompany) btnStopCompany.disabled = false;
+      if (btnExportCompany) btnExportCompany.disabled = true;
+      statusEl.textContent = `🔎 סורק חברה ${cid}… מושך רשימת פרויקטים…`;
+
+      let pids = [];
+      try{
+        pids = await getProjectIdsForCompany(cid);
+      }catch(e){
+        statusEl.textContent = "❌ כשל בשליפת פרויקטים לחברה.";
+        if (btnScanCompany) btnScanCompany.disabled = false;
+        if (btnStopCompany) btnStopCompany.disabled = true;
+        return;
+      }
+
+      pids = (pids || []).map(String).filter(Boolean).sort((a,b)=>Number(a)-Number(b));
+      if (!pids.length){
+        statusEl.textContent = "⚠️ לא נמצאו פרויקטים לחברה.";
+        if (btnScanCompany) btnScanCompany.disabled = false;
+        if (btnStopCompany) btnStopCompany.disabled = true;
+        return;
+      }
+
+      lastCompanyScan = [];
+      renderScanRows(lastCompanyScan);
+
+      for (let i=0;i<pids.length;i++){
+        const pid = pids[i];
+        if (cancelCompanyScan){
+          statusEl.textContent = `⏹️ נעצר. נסרקו ${lastCompanyScan.length} מתוך ${pids.length}.`;
+          break;
+        }
+        statusEl.textContent = `🔄 סורק פרויקט ${pid} (${i+1}/${pids.length})…`;
+
+        try{
+          const ep = await runEditProjectExtract(pid);
+          const fields = ep?.fields || {};
+          const licTotal = (fields.licenseTotal !== null && fields.licenseTotal !== undefined) ? Number(fields.licenseTotal) : null;
+
+          statusEl.textContent = `🔄 סורק פרויקט ${pid} (${i+1}/${pids.length})… סופר משתמשים…`;
+          const uc = await fetchUsersCounts(ep.companyId || cid, pid);
+          const usersTotal = uc?.total ?? null;
+          const usersActive = uc?.active ?? null;
+          const usersInactive = uc?.inactive ?? null;
+
+          const flag = (licTotal !== null && !Number.isNaN(licTotal) && usersTotal !== null && !Number.isNaN(Number(usersTotal)) && licTotal < Number(usersTotal))
+            ? "RED" : "OK";
+
+          lastCompanyScan.push({
+            companyId: ep.companyId || cid,
+            companyName: ep.companyName || "",
+            projectId: pid,
+            projectName: fields.projectName || "",
+            status: fields.status || "",
+            sales: fields.salesBmby || "",
+            dueDate: fields.dueDate || "",
+            licenseBase: fields.licenseBase ?? "",
+            licenseAdd: fields.licenseAdd ?? "",
+            licenseTotal: fields.licenseTotal ?? "",
+            usersTotal,
+            usersActive,
+            usersInactive,
+            flag
+          });
+
+          renderScanRows(lastCompanyScan);
+        }catch(e){
+          lastCompanyScan.push({ companyId: cid, companyName:"", projectId: pid, projectName:"", licenseTotal:"", usersTotal:"", flag:"RED" });
+          renderScanRows(lastCompanyScan);
+        }
+
+        await new Promise(r=>setTimeout(r, 0));
+      }
+
+      const redCount = lastCompanyScan.filter(x=>x.flag==="RED").length;
+      statusEl.textContent = `✅ סריקת חברה הסתיימה. פרויקטים: ${lastCompanyScan.length}. חריגות: ${redCount}.`;
+
+      if (btnScanCompany) btnScanCompany.disabled = false;
+      if (btnStopCompany) btnStopCompany.disabled = true;
+      if (btnExportCompany) btnExportCompany.disabled = false;
+    }
+
+    if (btnScanCompany){
+      btnScanCompany.addEventListener("click", (e)=>{ e.preventDefault(); scanCompanyFlow(); });
+
+    if (btnStopCompany){
+      btnStopCompany.addEventListener("click", (e)=>{
+        e.preventDefault();
+        cancelCompanyScan = true;
+        if (btnStopCompany) btnStopCompany.disabled = true;
+        statusEl.textContent = "⏹️ בקשת עצירה התקבלה… מסיים את הפרויקט הנוכחי.";
+      });
+    }
+
+}
+
+    if (btnExportCompany){
+      btnExportCompany.addEventListener("click", (e)=>{
+        e.preventDefault();
+        if (!lastCompanyScan || !lastCompanyScan.length) return;
+
+
+        const cid = normDigits(cidEl ? cidEl.value : "") || (lastCompanyScan[0]?.companyId || "");
+        const fname = `company_${cid}_projects.xlsx`;
+
+        const rows = [];
+        rows.push(["CompanyID","CompanyName","ProjectID","ProjectName","Status","Sales(Bmby)","DueDate","LicBase","LicAdd","LicTotal","UsersTotal","UsersActive","UsersInactive","Flag"]);
+
+        const isClosed = (s) => {
+          const t = String(s||"").trim().toLowerCase();
+          return t.includes("סגור") || t.includes("closed");
+        };
+
+        const parseDue = (s) => {
+          const t = String(s||"").trim();
+          const m = t.match(/^(\d{1,2})[\/\.-](\d{1,2})[\/\.-](\d{2,4})$/);
+          if (!m) return null;
+          let d = Number(m[1]), mo = Number(m[2]), y = Number(m[3]);
+          if (y < 100) y = 2000 + y;
+          const dt = new Date(y, mo-1, d);
+          return Number.isNaN(dt.getTime()) ? null : dt;
+        };
+
+        const today0 = new Date(); today0.setHours(0,0,0,0);
+
+        for (const r of lastCompanyScan){
+          rows.push([
+            r.companyId, r.companyName, r.projectId, r.projectName, r.status, r.sales, r.dueDate,
+            r.licenseBase, r.licenseAdd, r.licenseTotal,
+            r.usersTotal, r.usersActive, r.usersInactive,
+            r.flag==="RED" ? "ALERT" : "OK"
+          ]);
+        }
+
+        try{
+          if (typeof XLSX === "undefined" || !XLSX.utils) throw new Error("XLSX lib missing");
+
+          const ws = XLSX.utils.aoa_to_sheet(rows);
+          const wb = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(wb, ws, "Company Scan");
+
+          ws["!cols"] = [
+            {wch:10},{wch:22},{wch:10},{wch:28},{wch:12},{wch:16},{wch:12},
+            {wch:8},{wch:8},{wch:8},{wch:10},{wch:10},{wch:12},{wch:8}
+          ];
+
+          const headerStyle = { font:{bold:true,color:{rgb:"FFFFFF"}}, fill:{patternType:"solid", fgColor:{rgb:"1F2937"}} };
+          for (let c=0;c<rows[0].length;c++){
+            const cell = ws[XLSX.utils.encode_cell({r:0,c})];
+            if (cell) cell.s = headerStyle;
+          }
+
+          const styleAlert = { fill:{patternType:"solid", fgColor:{rgb:"FEE2E2"}}, font:{bold:true,color:{rgb:"991B1B"}} };
+          const styleClosed = { fill:{patternType:"solid", fgColor:{rgb:"E5E7EB"}}, font:{color:{rgb:"374151"}} };
+          const styleDuePast = { fill:{patternType:"solid", fgColor:{rgb:"FEF3C7"}}, font:{color:{rgb:"92400E"}} };
+
+          for (let r=1;r<rows.length;r++){
+            const rowObj = lastCompanyScan[r-1] || {};
+            const dueDt = parseDue(rowObj.dueDate);
+            const duePast = !!(dueDt && dueDt.getTime() < today0.getTime());
+            const closed = isClosed(rowObj.status);
+            const alert = rowObj.flag === "RED";
+
+            const rowStyle = alert ? styleAlert : (closed ? styleClosed : (duePast ? styleDuePast : null));
+            if (!rowStyle) continue;
+
+            for (let c=0;c<rows[0].length;c++){
+              const cell = ws[XLSX.utils.encode_cell({r,c})];
+              if (cell) cell.s = rowStyle;
+            }
+          }
+
+          XLSX.writeFile(wb, fname);
+        }catch(e){
+          const csvName = `company_${cid}_projects.csv`;
+          downloadCsv(csvName, rows);
+        }
+
+      });
+    }
+
+btnRun?.addEventListener("click", run);
     pidEl?.addEventListener("keydown", (e) => {
       if (e.key === "Enter") run();
     });
@@ -2033,6 +2383,262 @@ async function fetchTextSmart(url) {
 
     setTimeout(tick, 200);
   }
+
+
+    /*****************************************************************
+     * TAB: DICTIONARY
+     *****************************************************************/
+    const DICT_CACHE_KEY = "dictionary_cache_v2";
+
+    function renderDictionaryPanel() {
+      return `
+        <div style="font:900 14px/1.2 var(--bmby-font);">חיפוש במילון</div>
+        <div class="bmby-small">חיפוש מתוך EditDictionaries.php לפי עמודת <b>קוד</b> או <b>עברית</b>. אפשר לבחור חיפוש מדויק או כללי.</div>
+
+        <div class="bmby-row" style="margin-top:10px; gap:8px; align-items:center; flex-wrap:wrap;">
+          <input class="bmby-input" data-x="dictTerm" placeholder="מילת חיפוש / קוד / טקסט בעברית" style="flex:1; min-width:220px;">
+          <button class="bmby-btn primary" data-x="dictSearch">חפש</button>
+          <button class="bmby-btn secondary" data-x="dictOpen">פתח מילון</button>
+          <button class="bmby-btn secondary" data-x="dictReload">רענן</button>
+        </div>
+
+        <div class="bmby-row" style="gap:18px; align-items:center; flex-wrap:wrap; margin-top:10px;">
+          <label style="display:flex; align-items:center; gap:6px; font-weight:800;">
+            <input type="radio" name="bmbyDictMode" data-x="dictMode" value="general" checked>
+            חיפוש כללי
+          </label>
+          <label style="display:flex; align-items:center; gap:6px; font-weight:800;">
+            <input type="radio" name="bmbyDictMode" data-x="dictMode" value="exact">
+            חיפוש מדויק
+          </label>
+          <label style="display:flex; align-items:center; gap:6px; font-weight:800;">
+            <input type="radio" name="bmbyDictField" data-x="dictField" value="code" checked>
+            קוד
+          </label>
+          <label style="display:flex; align-items:center; gap:6px; font-weight:800;">
+            <input type="radio" name="bmbyDictField" data-x="dictField" value="hebrew">
+            עברית
+          </label>
+          <label style="display:flex; align-items:center; gap:6px; font-weight:800;">
+            <input type="radio" name="bmbyDictField" data-x="dictField" value="both">
+            שניהם
+          </label>
+        </div>
+
+        <div class="bmby-card" style="margin-top:10px; padding:10px;">
+          <div class="bmby-small muted" data-x="dictStatus">מוכן. לחץ חפש כדי לטעון את המילון.</div>
+          <div style="margin-top:8px; max-height:260px; overflow:auto; border:1px solid rgba(255,255,255,.08); border-radius:10px;">
+            <table data-x="dictTable" style="width:100%; border-collapse:collapse; font:700 12px/1.35 var(--bmby-font);">
+              <thead>
+                <tr style="position:sticky; top:0; background:rgba(0,0,0,.25); backdrop-filter: blur(6px);">
+                  <th style="text-align:right; padding:6px 8px; border-bottom:1px solid rgba(255,255,255,.08);">קוד</th>
+                  <th style="text-align:right; padding:6px 8px; border-bottom:1px solid rgba(255,255,255,.08);">עברית</th>
+                  <th style="text-align:right; padding:6px 8px; border-bottom:1px solid rgba(255,255,255,.08);">אנגלית</th>
+                  <th style="text-align:right; padding:6px 8px; border-bottom:1px solid rgba(255,255,255,.08);">תיאור</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    function dictionaryNormalize(s) {
+      return String(s || "")
+        .replace(/\u00a0/g, " ")
+        .replace(/[\s\u200e\u200f]+/g, " ")
+        .trim();
+    }
+
+    function dictionaryMatch(value, term, exact) {
+      const source = dictionaryNormalize(value);
+      const q = dictionaryNormalize(term);
+      if (!q) return true;
+      if (exact) return source === q;
+      const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+      const hay = source.toLowerCase();
+      return words.every(w => hay.includes(w));
+    }
+
+    function parseDictionaryRows(html) {
+      const doc = new DOMParser().parseFromString(String(html || ""), "text/html");
+      const rows = Array.from(doc.querySelectorAll("tr"));
+      const out = [];
+
+      function cellText(td) {
+        if (!td) return "";
+        const inp = td.querySelector("input:not([type=button]):not([type=hidden]), textarea, select");
+        if (inp) {
+          if (inp.tagName === 'SELECT') {
+            return dictionaryNormalize(inp.options?.[inp.selectedIndex]?.textContent || inp.value || "");
+          }
+          return dictionaryNormalize(inp.value || inp.getAttribute('value') || "");
+        }
+        return dictionaryNormalize(td.textContent || "");
+      }
+
+      for (const row of rows) {
+        const cells = Array.from(row.querySelectorAll(":scope > td"));
+        if (cells.length < 4) continue;
+
+        const hebInput = row.querySelector("input[dir='rtl'][name^='id']:not([name^='idalt'])");
+        if (!hebInput) continue;
+
+        const hebTd = hebInput.closest('td');
+        const hebIdx = hebTd ? cells.indexOf(hebTd) : -1;
+        if (hebIdx < 0) continue;
+
+        const hebrew = dictionaryNormalize(hebInput.value || hebInput.getAttribute("value") || "");
+        const codeCell = hebIdx > 0 ? cells[hebIdx - 1] : null;
+        const englishCell = hebIdx > 1 ? cells[hebIdx - 2] : null;
+        const altCell = hebIdx + 1 < cells.length ? cells[hebIdx + 1] : null;
+        const descCell = hebIdx + 2 < cells.length ? cells[hebIdx + 2] : null;
+
+        const code = cellText(codeCell);
+        const english = cellText(englishCell);
+        const alt = cellText(altCell);
+        let description = '';
+        if (descCell) {
+          const strongs = Array.from(descCell.querySelectorAll('strong')).map(x => dictionaryNormalize(x.textContent)).filter(Boolean);
+          description = strongs.join(' | ') || cellText(descCell);
+        }
+
+        if (!code && !hebrew && !english) continue;
+        // skip header-like garbage
+        if (/^קוד$/i.test(code) || /^עברית$/i.test(hebrew)) continue;
+
+        out.push({ code, hebrew, english, alt, description });
+      }
+
+      return out;
+    }
+
+    function getDictionaryPageLinks(doc, currentUrl) {
+      const out = [];
+      const anchors = Array.from(doc.querySelectorAll('a[href]'));
+      for (const a of anchors) {
+        const href = a.getAttribute('href') || '';
+        const text = dictionaryNormalize(a.textContent);
+        if (!/Page=/i.test(href) && !/הדף הבא|next/i.test(text)) continue;
+        try {
+          const abs = new URL(href, currentUrl).toString();
+          if (!out.includes(abs)) out.push(abs);
+        } catch {}
+      }
+      return out;
+    }
+
+    async function getDictionaryRows(forceReload) {
+      if (!forceReload) {
+        const cached = Store.get(DICT_CACHE_KEY, null);
+        if (cached && Array.isArray(cached.rows) && cached.rows.length) return cached.rows;
+      }
+
+      const startUrl = location.origin + "/nihul/EditDictionaries.php";
+      const queue = [startUrl];
+      const seenPages = new Set();
+      const rows = [];
+      const seenKeys = new Set();
+
+      while (queue.length) {
+        const url = queue.shift();
+        if (!url || seenPages.has(url)) continue;
+        seenPages.add(url);
+
+        const html = await fetchTextSmart(url);
+        const pageRows = parseDictionaryRows(html);
+        for (const r of pageRows) {
+          const key = [r.code, r.hebrew, r.english, r.alt].join('||');
+          if (seenKeys.has(key)) continue;
+          seenKeys.add(key);
+          rows.push(r);
+        }
+
+        const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+        const nextLinks = getDictionaryPageLinks(doc, url);
+        for (const nextUrl of nextLinks) {
+          if (!seenPages.has(nextUrl) && !queue.includes(nextUrl)) queue.push(nextUrl);
+        }
+      }
+
+      Store.set(DICT_CACHE_KEY, { rows, ts: Date.now() });
+      return rows;
+    }
+
+    function renderDictionaryResults(tbody, rows) {
+      if (!tbody) return;
+      tbody.innerHTML = "";
+      for (const r of rows) {
+        const tr = document.createElement("tr");
+        const make = (txt) => {
+          const td = document.createElement("td");
+          td.style.textAlign = "right";
+          td.style.padding = "6px 8px";
+          td.style.borderBottom = "1px solid rgba(255,255,255,.06)";
+          td.textContent = txt || "";
+          return td;
+        };
+        tr.appendChild(make(r.code));
+        tr.appendChild(make(r.hebrew));
+        tr.appendChild(make(r.english));
+        tr.appendChild(make(r.description));
+        tbody.appendChild(tr);
+      }
+    }
+
+    function bindDictionaryPanel(panel) {
+      const termEl = panel.querySelector('[data-x="dictTerm"]');
+      const btnSearch = panel.querySelector('[data-x="dictSearch"]');
+      const btnOpen = panel.querySelector('[data-x="dictOpen"]');
+      const btnReload = panel.querySelector('[data-x="dictReload"]');
+      const statusEl = panel.querySelector('[data-x="dictStatus"]');
+      const tbody = panel.querySelector('[data-x="dictTable"] tbody');
+
+      async function run(forceReload) {
+        const term = dictionaryNormalize(termEl ? termEl.value : "");
+        const exact = !!panel.querySelector('[data-x="dictMode"][value="exact"]:checked');
+        const field = panel.querySelector('[data-x="dictField"]:checked')?.value || 'code';
+
+        if (!term && !forceReload) {
+          statusEl.textContent = 'הכנס מילת חיפוש.';
+          renderDictionaryResults(tbody, []);
+          return;
+        }
+
+        try {
+          statusEl.textContent = forceReload ? 'טוען מילון מחדש...' : 'טוען מילון ומחפש...';
+          const rows = await getDictionaryRows(!!forceReload);
+          let list = rows;
+          if (term) {
+            list = rows.filter(r => {
+              const byCode = dictionaryMatch(r.code, term, exact);
+              const byHeb = dictionaryMatch(r.hebrew, term, exact);
+              if (field === 'code') return byCode;
+              if (field === 'hebrew') return byHeb;
+              return byCode || byHeb;
+            });
+          }
+          renderDictionaryResults(tbody, list.slice(0, 100));
+          statusEl.textContent = `נמצאו ${list.length} תוצאות.`;
+          if (!list.length) toast('לא נמצאו תוצאות במילון', 'warn');
+        } catch (e) {
+          console.error('[DICT]', e);
+          statusEl.textContent = 'שגיאה בטעינת המילון.';
+          toast('שגיאה בטעינת המילון', 'error');
+        }
+      }
+
+      btnSearch?.addEventListener('click', () => run(false));
+      btnReload?.addEventListener('click', () => run(true));
+      btnOpen?.addEventListener('click', () => {
+        try { window.open(location.origin + '/nihul/EditDictionaries.php', '_blank'); } catch {}
+      });
+      termEl?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') run(false);
+      });
+    }
+
     function renderComingSoon(tabId) {
       const title =
         tabId === "passwords" ? "חיפוש סיסמאות" :
@@ -4189,6 +4795,735 @@ async function fetchTextSmart(url) {
 }
 
 
+function __bootIPBX_PARTITION_PREFIX_HELPER__(){
+  'use strict';
+
+  const CSS_ID = 'bmby-ipbx-prefix-style';
+  const BOX_ID = 'bmby-ipbx-prefix-box';
+  const STORE_KEY = 'BMBY__IPBX_PREFIX_LAST';
+
+  function injectCss(){
+    if (document.getElementById(CSS_ID)) return;
+    const s = document.createElement('style');
+    s.id = CSS_ID;
+    s.textContent = `
+      #${BOX_ID}{position:fixed;top:14px;right:14px;z-index:2147483647;background:#fff;color:#111;border:1px solid rgba(0,0,0,.14);border-radius:16px;box-shadow:0 14px 40px rgba(0,0,0,.20);padding:12px;width:360px;font:700 12px/1.4 Arial,sans-serif}
+      #${BOX_ID} .row{display:flex;gap:8px;align-items:center;margin-top:8px}
+      #${BOX_ID} input[type="text"]{flex:1;min-width:0;padding:9px 10px;border:1px solid rgba(0,0,0,.16);border-radius:12px;outline:none}
+      #${BOX_ID} button{padding:9px 10px;border:1px solid rgba(0,0,0,.16);background:#fff;border-radius:12px;cursor:pointer;font-weight:700}
+      #${BOX_ID} button.primary{background:rgba(37,99,235,.10);border-color:rgba(37,99,235,.35)}
+      #${BOX_ID} .muted{color:#666;font-size:11px}
+      #${BOX_ID} .results{margin-top:10px;max-height:260px;overflow:auto;border:1px solid rgba(0,0,0,.08);border-radius:12px;background:#fafafa}
+      #${BOX_ID} .item{padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.06);cursor:pointer}
+      #${BOX_ID} .item:last-child{border-bottom:none}
+      #${BOX_ID} .item:hover{background:rgba(37,99,235,.07)}
+      #${BOX_ID} .prefix{font-weight:900;color:#0b3aa6}
+      #${BOX_ID} .name{display:block;margin-top:2px;color:#222}
+      #${BOX_ID} .meta{display:block;margin-top:2px;color:#666;font-size:11px}
+      tr.bmbyPrefixHit{outline:3px solid rgba(37,99,235,.9)!important;box-shadow:0 0 0 5px rgba(37,99,235,.16) inset!important;background:rgba(37,99,235,.08)!important}
+    `;
+    document.head.appendChild(s);
+  }
+
+  function saveLast(val){ try{ localStorage.setItem(STORE_KEY, val||''); }catch(e){} }
+  function loadLast(){ try{ return localStorage.getItem(STORE_KEY)||''; }catch(e){ return ''; } }
+  function norm(s){ return String(s||'').replace(/[\s\u00A0\u200E\u200F]+/g,' ').trim(); }
+
+  function getRows(){
+    return Array.from(document.querySelectorAll('tr')).filter(tr => {
+      const tds = tr.querySelectorAll('td');
+      return tds.length >= 3 && Array.from(tds).slice(0,3).every(td => /ChangePartition/.test(td.getAttribute('onclick') || td.querySelector('a[onclick*="ChangePartition"]')?.getAttribute('onclick') || ''));
+    });
+  }
+
+  function parseRow(tr){
+    const tds = Array.from(tr.querySelectorAll('td'));
+    if (tds.length < 3) return null;
+    const partition = norm(tds[0].textContent);
+    const prefix = norm(tds[1].textContent);
+    const name = norm(tds[2].textContent);
+    const clickEl = tds[1].querySelector('a[onclick*="ChangePartition"]') || tds[0].querySelector('a[onclick*="ChangePartition"]') || tds[2].querySelector('a[onclick*="ChangePartition"]') || tds[1];
+    const onclick = clickEl.getAttribute('onclick') || '';
+    if (!prefix || !onclick) return null;
+    return { tr, partition, prefix, name, onclick, clickEl };
+  }
+
+  function getItems(){
+    return getRows().map(parseRow).filter(Boolean);
+  }
+
+  function clearHits(){ document.querySelectorAll('tr.bmbyPrefixHit').forEach(tr => tr.classList.remove('bmbyPrefixHit')); }
+  function hitRow(tr){ clearHits(); try{ tr.classList.add('bmbyPrefixHit'); tr.scrollIntoView({behavior:'smooth', block:'center'}); }catch(e){} }
+
+  function redirectToUsersPage(){
+    const target = 'http://voip2.bmby.com/ipbx/users_edit.php';
+    const go = () => {
+      try {
+        if (location.href !== target) location.assign(target);
+      } catch(e) {
+        try { location.href = target; } catch(_) {}
+      }
+    };
+    // ChangePartition is async; give it enough time before navigation.
+    setTimeout(go, 1200);
+    setTimeout(go, 2200);
+  }
+
+  function runPartition(item){
+    hitRow(item.tr);
+    saveLast(item.prefix);
+    const el = item.clickEl;
+    let clicked = false;
+    if (el && typeof el.click === 'function') {
+      try { el.click(); clicked = true; } catch(e) { console.error('[BMBY PREFIX] native click failed', e); }
+    }
+    if (!clicked) {
+      try { (0,eval)(item.onclick); clicked = true; } catch(e) { console.error('[BMBY PREFIX] click failed', e); }
+    }
+    redirectToUsersPage();
+  }
+
+  function renderResults(root, items){
+    const results = root.querySelector('[data-x="results"]');
+    if (!results) return;
+    results.innerHTML = '';
+    if (!items.length) {
+      results.innerHTML = '<div class="item">לא נמצאו תוצאות</div>';
+      return;
+    }
+    items.slice(0,100).forEach(item => {
+      const div = document.createElement('div');
+      div.className = 'item';
+      div.innerHTML = `<span class="prefix">${item.prefix}</span><span class="name">${item.name || '—'}</span><span class="meta">Partition: ${item.partition || '—'}</span>`;
+      div.addEventListener('click', () => runPartition(item));
+      results.appendChild(div);
+    });
+  }
+
+  function doSearch(root, autoRun){
+    const inp = root.querySelector('[data-x="prefix"]');
+    const term = norm(inp && inp.value);
+    saveLast(term);
+    const all = getItems();
+    let found = [];
+    if (term) found = all.filter(x => x.prefix.includes(term));
+    renderResults(root, found);
+    if (autoRun && found.length === 1) runPartition(found[0]);
+  }
+
+  function mount(){
+    if (document.getElementById(BOX_ID)) return;
+    injectCss();
+    const box = document.createElement('div');
+    box.id = BOX_ID;
+    box.innerHTML = `
+      <div style="font-weight:900">IPBX Prefix Search</div>
+      <div class="muted">חיפוש לפי PREFIX (העמודה השנייה). לחיצה על תוצאה תעביר למרכזייה.</div>
+      <div class="row">
+        <input type="text" data-x="prefix" placeholder="חפש PREFIX, למשל 5535">
+        <button type="button" class="primary" data-x="search">חפש</button>
+      </div>
+      <div class="row">
+        <button type="button" data-x="clear">נקה</button>
+        <button type="button" data-x="refresh">רענן רשימה</button>
+      </div>
+      <div class="results" data-x="results"></div>
+    `;
+    document.body.appendChild(box);
+    const inp = box.querySelector('[data-x="prefix"]');
+    inp.value = loadLast();
+    box.querySelector('[data-x="search"]').addEventListener('click', () => doSearch(box, false));
+    box.querySelector('[data-x="clear"]').addEventListener('click', () => { inp.value=''; saveLast(''); const results = box.querySelector('[data-x="results"]'); if (results) results.innerHTML = '<div class="item">הקלד PREFIX ולחץ חפש</div>'; clearHits(); inp.focus(); });
+    box.querySelector('[data-x="refresh"]').addEventListener('click', () => doSearch(box, false));
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(box, true); });
+    const results = box.querySelector('[data-x="results"]');
+    if (results) results.innerHTML = '<div class="item">הקלד PREFIX ולחץ חפש</div>';
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, {once:true});
+  else mount();
+}
+
+
+
+
+function __bootIPBX_USERS_SCAN_HELPER__(){
+  'use strict';
+
+  const host = location.host;
+  const path = location.pathname;
+  const allowed = ['voip.bmby.com','voip2.bmby.com','82.166.228.179','82.166.228.180'];
+  if (!allowed.includes(host)) return;
+  if (path !== '/ipbx/users.php' && path !== '/ipbx/users_edit.php') return;
+
+  const BOX_ID = 'bmby-ipbx-users-scan-box';
+  const AUTO_USERS_KEY = 'BMBY__IPBX_AUTO_OPEN_USERS';
+  const STYLE_ID = 'bmby-ipbx-users-scan-style';
+  const POS_KEY = 'bmby_ipbx_users_scan_box_pos_v2';
+  const LOG_PREFIX = '[BMBY USERS SCAN v1.4.29]';
+  const scanState = { running:false, paused:false, cancel:false };
+
+  function log(){ try { console.log(LOG_PREFIX, ...arguments); } catch(e){} }
+  function norm(s){ return String(s||'').replace(/[\u00A0\u200E\u200F\s]+/g,' ').trim(); }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
+
+  function tryAutoOpenUsersPage(){
+    // v1.4.26: no extra refresh/redirect on entry to USERS EDIT.
+    return;
+  }
+
+  function injectCss(){
+    if (document.getElementById(STYLE_ID)) return;
+    const s = document.createElement('style');
+    s.id = STYLE_ID;
+    s.textContent = `
+      #${BOX_ID}{position:fixed;top:14px;right:14px;left:auto;z-index:2147483647;width:700px;max-width:calc(100vw - 28px);background:#fff;color:#111;border:1px solid rgba(0,0,0,.14);border-radius:16px;box-shadow:0 14px 40px rgba(0,0,0,.20);padding:12px;font:700 12px/1.45 Arial,sans-serif}
+      #${BOX_ID}.min{width:260px}
+      #${BOX_ID} .head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+      #${BOX_ID} .drag{cursor:move;user-select:none;font-weight:900}
+      #${BOX_ID} .headBtns{display:flex;gap:6px;align-items:center}
+      #${BOX_ID} .row{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
+      #${BOX_ID} button{padding:9px 10px;border:1px solid rgba(0,0,0,.16);background:#fff;border-radius:12px;cursor:pointer;font-weight:700}
+      #${BOX_ID} button.primary{background:rgba(37,99,235,.10);border-color:rgba(37,99,235,.35)}
+      #${BOX_ID} .muted{color:#666;font-size:11px}
+      #${BOX_ID} .status{margin-top:8px;padding:8px 10px;border-radius:12px;background:#f7f7f7;border:1px solid rgba(0,0,0,.06);white-space:pre-wrap}
+      #${BOX_ID} .results{margin-top:10px;max-height:360px;overflow:auto;border:1px solid rgba(0,0,0,.08);border-radius:12px;background:#fafafa}
+      #${BOX_ID} table{width:100%;border-collapse:collapse;font-size:11px}
+      #${BOX_ID} th,#${BOX_ID} td{border-bottom:1px solid rgba(0,0,0,.08);padding:6px 8px;text-align:left;vertical-align:top}
+      #${BOX_ID} th{position:sticky;top:0;background:#fff;z-index:1}
+      #${BOX_ID} .small{font-size:10px;color:#666}
+      #${BOX_ID} .hiddenBody{display:none}
+      tr.bmbyUsersLinkHit{outline:3px solid rgba(37,99,235,.9)!important;box-shadow:0 0 0 5px rgba(37,99,235,.16) inset!important;background:rgba(37,99,235,.08)!important}
+    `;
+    document.head.appendChild(s);
+  }
+
+  function setStatus(msg){
+    const el = document.querySelector(`#${BOX_ID} [data-x="status"]`);
+    if (el) el.textContent = msg;
+  }
+
+  function updatePauseButton(){
+    const btn = document.querySelector(`#${BOX_ID} [data-x="pause"]`);
+    if (!btn) return;
+    btn.textContent = scanState.paused ? 'המשך' : 'עצור';
+    btn.disabled = !scanState.running;
+  }
+
+  async function waitIfPaused(){
+    while (scanState.paused && !scanState.cancel) {
+      setStatus('הסריקה מושהית. לחץ המשך כדי להמשיך.');
+      await new Promise(r => setTimeout(r, 250));
+    }
+  }
+
+  function absoluteUrl(u){
+    try { return new URL(u, location.href).toString(); } catch(e){ return ''; }
+  }
+
+  function getUserLinksFromDoc(rootDoc){
+    const seen = new Set();
+    const out = [];
+    Array.from(rootDoc.querySelectorAll('a[href*="users.php?id="]')).forEach(a => {
+      const href = absoluteUrl(a.getAttribute('href') || '');
+      if (!href || seen.has(href)) return;
+      const idm = href.match(/[?&]id=(\d+)/i);
+      const row = a.closest('tr');
+      const rowText = norm(row ? row.textContent : a.textContent);
+      const img = a.querySelector('img[alt],img[title]');
+      const label = norm(a.textContent || img?.getAttribute('title') || img?.getAttribute('alt') || rowText || ('User '+(idm ? idm[1] : '')));
+      seen.add(href);
+      out.push({ href, id: idm ? idm[1] : '', label, rowText });
+    });
+    return out;
+  }
+
+  function getUsersEditPageNumber(url){
+    try {
+      const u = new URL(url, location.href);
+      const raw = u.searchParams.get('_qb_users_lister_page');
+      const n = parseInt(raw || '0', 10);
+      return Number.isFinite(n) && n >= 0 ? n : 0;
+    } catch(e) {
+      return 0;
+    }
+  }
+
+  function getStrictNextUsersEditUrlFromDoc(rootDoc, baseUrl){
+    const candidates = [];
+    const push = (raw) => {
+      const v = norm(raw);
+      if (!v) return;
+      try {
+        const abs = new URL(v, baseUrl || location.href).toString();
+        if (!/\/ipbx\/users_edit\.php/i.test(abs)) return;
+        if (!/[?&]_qb_users_lister_page=\d+/i.test(abs)) return;
+        candidates.push(abs);
+      } catch(e) {}
+    };
+
+    Array.from(rootDoc.querySelectorAll('img[title="Next"], img[src*="NEXT.gif"], img[src*="next.gif"]')).forEach(img => {
+      const oc = img.getAttribute('onclick') || img.closest('[onclick]')?.getAttribute('onclick') || '';
+      const m = oc.match(/window\.location\s*=\s*['"]([^'"]*users_edit\.php[^'"]*)['"]/i)
+             || oc.match(/window\.location\s*=\s*['"]([^'"]*_qb_users_lister_page=\d+[^'"]*)['"]/i);
+      if (m) push(m[1]);
+      const parentA = img.closest('a[href]');
+      if (parentA) push(parentA.getAttribute('href') || '');
+    });
+
+    Array.from(rootDoc.querySelectorAll('a[title="Next"], a[href*="_qb_users_lister_page="]')).forEach(a => {
+      const txt = norm(a.textContent || a.getAttribute('title') || '');
+      if (txt === 'Next' || /_qb_users_lister_page=/i.test(a.getAttribute('href') || '')) {
+        push(a.getAttribute('href') || '');
+      }
+    });
+
+    const currentPage = getUsersEditPageNumber(baseUrl || location.href);
+    const valid = Array.from(new Set(candidates)).filter(u => getUsersEditPageNumber(u) === currentPage + 1);
+    return valid[0] || '';
+  }
+
+  function parseHtml(html, baseUrl){
+    const doc = document.implementation.createHTMLDocument('tmp');
+    doc.documentElement.innerHTML = html;
+    const base = doc.createElement('base');
+    base.href = baseUrl;
+    doc.head.appendChild(base);
+    return doc;
+  }
+
+  function fetchText(url){
+    return new Promise((resolve, reject) => {
+      try {
+        if (typeof GM_xmlhttpRequest === 'function') {
+          GM_xmlhttpRequest({
+            method: 'GET',
+            url,
+            onload: (res) => resolve(String(res.responseText || '')),
+            onerror: (err) => reject(err)
+          });
+        } else {
+          fetch(url, { credentials: 'include' }).then(r => r.text()).then(resolve).catch(reject);
+        }
+      } catch (e) { reject(e); }
+    });
+  }
+
+  function readField(field){
+    if (!field) return '';
+    if (field.tagName === 'SELECT') return norm(field.options[field.selectedIndex]?.text || field.value || '');
+    if (field.type === 'checkbox' || field.type === 'radio') return field.checked ? 'Yes' : 'No';
+    return norm(field.value || field.textContent || '');
+  }
+
+  function readBySelectors(doc, selectors){
+    for (const sel of selectors) {
+      const el = doc.querySelector(sel);
+      if (!el) continue;
+      const v = readField(el) || norm(el.textContent);
+      if (v) return v;
+    }
+    return '';
+  }
+
+  function readCaptionValue(doc, captionId){
+    const cap = doc.getElementById(captionId);
+    return norm(cap ? cap.textContent : '');
+  }
+
+  function textById(doc, id){
+    const el = doc.getElementById(id);
+    return norm(el ? el.textContent : '');
+  }
+
+
+  function getPanel729WholeText(doc){
+    const root = doc.getElementById('__qbws_wspanel729_shell') || doc.getElementById('wspanel729') || doc.querySelector('table.parameter_box') || doc.body;
+    return norm(root ? root.textContent : '');
+  }
+
+  function readPanelValueFromWholeText(doc, label){
+    const whole = getPanel729WholeText(doc);
+    if (!whole) return '';
+    let re = null;
+    if (/Always/i.test(label)) {
+      re = /Call\s*Forward\s*Always\s*is\s*Enabled\s*to\s*:\s*(.*?)\s*(?:\(by\s*default\)|$)/i;
+    } else if (/No\s*Answer/i.test(label)) {
+      re = /Call\s*Forward\s*No\s*Answer\s*is\s*Enabled\s*to\s*:\s*(.*?)\s*(?:\(by\s*default\)|$)/i;
+    } else {
+      return '';
+    }
+    const m = whole.match(re);
+    return m ? norm(m[1]) : '';
+  }
+
+  function readPanelLine(doc, patterns){
+    const spans = Array.from(doc.querySelectorAll('#wspanel729 span.normal, #wspanel729 .normal, #__qbws_wspanel729_shell span.normal, #__qbws_wspanel729_shell .normal'));
+    for (const sp of spans) {
+      const txt = norm(sp.textContent);
+      if (!txt) continue;
+      for (const re of patterns) {
+        const m = txt.match(re);
+        if (m) return m[1] ? norm(m[1]) : txt;
+      }
+    }
+    return '';
+  }
+
+  function hasPanelText(doc, text){
+    const whole = norm((doc.getElementById('wspanel729') || doc.getElementById('__qbws_wspanel729_shell') || doc.body).textContent);
+    return whole.includes(text) ? 'Yes' : '';
+  }
+
+  function extractExtensionRecord(html, url, seed){
+    const doc = parseHtml(html, url);
+    const rec = {
+      pageUrl: url,
+      id: readBySelectors(doc, ['#hdn_user_id','input[name="hdn_user_id"]']) || (seed?.id || ''),
+      linkLabel: seed?.label || '',
+      extension: readBySelectors(doc, ['#txt_ext_num','input[name="txt_ext_num"]']),
+      extensionCaption: readCaptionValue(doc, 'txt_ext_numcaption'),
+      displayName: readBySelectors(doc, ['#txt_display_name','input[name="txt_display_name"]']),
+      directDid: readBySelectors(doc, ['#txt_direct_did','input[name="txt_direct_did"]']),
+      outboundCid: readBySelectors(doc, ['#txt_outbound_cid','input[name="txt_outbound_cid"]']),
+      email: readBySelectors(doc, ['#txt_email_address','input[name="txt_email_address"]']),
+      uniqueAddress: readBySelectors(doc, ['#txt_unique_address','input[name="txt_unique_address"]']),
+      macAddress: readBySelectors(doc, ['#txt_mac_address','input[name="txt_mac_address"]']),
+      alsoDial: readBySelectors(doc, ['#txt_dial_also','input[name="txt_dial_also"]']),
+      dndStatus: textById(doc, 'cpt_dnd_status') || readPanelLine(doc, [/^DnD is Currently (.+)$/i]),
+      callForwardAlways: readPanelLine(doc, [/^Call\s*Forward\s*Always\s*is\s*Enabled\s*to:\s*(.+?)\s*\(by\s*default\)$/i, /^Call\s*Forward\s*Always\s*is\s*Enabled\s*to:\s*(.+)$/i]) || readPanelValueFromWholeText(doc, 'Call Forward Always is Enabled to'),
+      callForwardNoAnswer: readPanelLine(doc, [/^Call\s*Forward\s*No\s*Answer\s*is\s*Enabled\s*to:\s*(.+?)\s*\(by\s*default\)$/i, /^Call\s*Forward\s*No\s*Answer\s*is\s*Enabled\s*to:\s*(.+)$/i]) || readPanelValueFromWholeText(doc, 'Call Forward No Answer is Enabled to'),
+      autoIncomingRecording: hasPanelText(doc, 'Automatic Incoming Call Recording'),
+      autoOutgoingRecording: hasPanelText(doc, 'Automatic Outgoing Call Recording'),
+      partitionPinCode: readPanelLine(doc, [/^Partition PIN Code \(For Risk Management\):\s*(.+)$/i]),
+      title: norm(doc.title || '')
+    };
+
+    if (!rec.extension && rec.extensionCaption) {
+      const m = rec.extensionCaption.match(/\[(\d{1,10})\]/);
+      if (m) rec.extension = m[1];
+    }
+    if (!rec.displayName && rec.extensionCaption) {
+      rec.displayName = norm(rec.extensionCaption.replace(/\[\d{1,10}\]/g,''));
+    }
+    return rec;
+  }
+
+  function toCsv(rows){
+    const headers = ['Seq','UserID','Extension','ExtensionCaption','DisplayName','DirectDID','OutboundCID','Email','UniqueAddress','MacAddress','AlsoDial','DnDStatus','CallForwardAlways','CallForwardNoAnswer','AutoIncomingRecording','AutoOutgoingRecording','PartitionPinCode','LinkLabel','PageURL'];
+    const lines = [headers.join(',')];
+    rows.forEach((r, idx) => {
+      const vals = [idx+1,r.id,r.extension,r.extensionCaption,r.displayName,r.directDid,r.outboundCid,r.email,r.uniqueAddress,r.macAddress,r.alsoDial,r.dndStatus,r.callForwardAlways,r.callForwardNoAnswer,r.autoIncomingRecording,r.autoOutgoingRecording,r.partitionPinCode,r.linkLabel,r.pageUrl]
+        .map(v => '"' + String(v==null?'':v).replace(/"/g,'""') + '"');
+      lines.push(vals.join(','));
+    });
+    return '\ufeff' + lines.join('\n');
+  }
+
+  function download(name, text, type){
+    const blob = new Blob([text], { type: type || 'text/plain;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+  }
+
+  function renderRows(rows){
+    const root = document.getElementById(BOX_ID);
+    if (!root) return;
+    const el = root.querySelector('[data-x="results"]');
+    if (!el) return;
+    if (!rows.length) {
+      el.innerHTML = '<div style="padding:10px">אין עדיין תוצאות</div>';
+      return;
+    }
+    el.innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>UserID</th>
+            <th>Ext</th>
+            <th>Display Name</th>
+            <th>Direct DID</th>
+            <th>Outbound CID</th>
+            <th>Email</th>
+            <th>Unique Address</th>
+            <th>MAC</th>
+            <th>Also Dial</th>
+            <th>DnD</th>
+            <th>CF Always</th>
+            <th>CF No Answer</th>
+            <th>Auto In Rec</th>
+            <th>Auto Out Rec</th>
+            <th>PIN</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((r, idx) => `<tr>
+            <td>${idx+1}</td>
+            <td>${esc(r.id)}</td>
+            <td>${esc(r.extension || r.extensionCaption)}</td>
+            <td>${esc(r.displayName)}</td>
+            <td>${esc(r.directDid)}</td>
+            <td>${esc(r.outboundCid)}</td>
+            <td>${esc(r.email)}</td>
+            <td>${esc(r.uniqueAddress)}</td>
+            <td>${esc(r.macAddress)}</td>
+            <td>${esc(r.alsoDial)}</td>
+            <td>${esc(r.dndStatus)}</td>
+            <td>${esc(r.callForwardAlways)}</td>
+            <td>${esc(r.callForwardNoAnswer)}</td>
+            <td>${esc(r.autoIncomingRecording)}</td>
+            <td>${esc(r.autoOutgoingRecording)}</td>
+            <td>${esc(r.partitionPinCode)}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
+  function renderLinks(links){
+    const root = document.getElementById(BOX_ID);
+    if (!root) return;
+    const el = root.querySelector('[data-x="results"]');
+    if (!el) return;
+    if (!links.length) {
+      el.innerHTML = '<div style="padding:10px">לא נמצאו קישורים</div>';
+      return;
+    }
+    el.innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>UserID</th>
+            <th>Label</th>
+            <th>Link</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${links.map((x, idx) => `<tr>
+            <td>${idx+1}</td>
+            <td>${esc(x.id || '')}</td>
+            <td>${esc(x.label || x.rowText || '')}</td>
+            <td><a href="${esc(x.href)}" target="_blank" rel="noopener noreferrer">פתח שלוחה</a></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
+  async function collectAllUserLinks(){
+    const all = [];
+    const seenLinks = new Set();
+    const seenPages = new Set();
+    let currentUrl = location.href;
+    let currentDoc = document;
+    let pageCounter = 0;
+    const maxPages = 25;
+
+    while (currentUrl && !seenPages.has(currentUrl) && pageCounter < maxPages) {
+      seenPages.add(currentUrl);
+      pageCounter++;
+      const pageNo = getUsersEditPageNumber(currentUrl);
+      setStatus(`טוען דף שלוחות ${pageCounter} (pager ${pageNo})...`);
+
+      let doc = currentDoc;
+      if (!doc) {
+        try {
+          const html = await fetchText(currentUrl);
+          doc = parseHtml(html, currentUrl);
+        } catch (e) {
+          log('pagination fetch failed', currentUrl, e);
+          break;
+        }
+      }
+
+      const items = getUserLinksFromDoc(doc);
+      items.forEach(it => {
+        if (!seenLinks.has(it.href)) {
+          seenLinks.add(it.href);
+          all.push(it);
+        }
+      });
+
+      const nextUrl = getStrictNextUsersEditUrlFromDoc(doc, currentUrl);
+      if (!nextUrl) break;
+      if (seenPages.has(nextUrl)) break;
+      const nextPage = getUsersEditPageNumber(nextUrl);
+      if (nextPage !== pageNo + 1) break;
+
+      currentUrl = nextUrl;
+      currentDoc = null;
+    }
+
+    if (pageCounter >= maxPages) {
+      setStatus(`נעצרתי אחרי ${maxPages} דפי USERS כדי למנוע ריצה אינסופית. כרגע נאספו ${all.length} שלוחות.`);
+    }
+
+    return all;
+  }
+
+  async function scanAllUsers(){
+    if (scanState.running) {
+      setStatus('כבר מתבצעת סריקה.');
+      return;
+    }
+    scanState.running = true;
+    scanState.paused = false;
+    scanState.cancel = false;
+    const scanBtn = document.querySelector(`#${BOX_ID} [data-x="scan"]`);
+    if (scanBtn) scanBtn.disabled = true;
+    updatePauseButton();
+    try {
+      setStatus('אוסף קישורי שלוחות מהעמוד הנוכחי ומהעמודים הבאים...');
+      const links = await collectAllUserLinks();
+      if (!links.length) {
+        setStatus('לא נמצאו קישורי users.php?id=... במסך הזה.');
+        renderRows([]);
+        return;
+      }
+      setStatus(`נמצאו ${links.length} שלוחות. מתחיל סריקה...`);
+      const out = [];
+      for (let i=0; i<links.length; i++) {
+        if (scanState.cancel) {
+          setStatus(`הסריקה נעצרה. נשמרו ${out.length} תוצאות.`);
+          break;
+        }
+        await waitIfPaused();
+        if (scanState.cancel) {
+          setStatus(`הסריקה נעצרה. נשמרו ${out.length} תוצאות.`);
+          break;
+        }
+        const link = links[i];
+        setStatus(`סורק שלוחה ${i+1}/${links.length} | id=${link.id || '?'} ...`);
+        try {
+          const html = await fetchText(link.href);
+          const rec = extractExtensionRecord(html, link.href, link);
+          out.push(rec);
+          renderRows(out);
+        } catch (e) {
+          out.push({ pageUrl: link.href, id: link.id || '', linkLabel: link.label || '', extension: '', extensionCaption:'', displayName: 'ERROR', directDid: '', outboundCid: '', email: '', uniqueAddress: '', macAddress: '', alsoDial: String(e), dndStatus:'', callForwardAlways:'', callForwardNoAnswer:'', autoIncomingRecording:'', autoOutgoingRecording:'', partitionPinCode:'' });
+          renderRows(out);
+          log('user fetch failed', link.href, e);
+        }
+      }
+      window.__bmbyUsersScanRows = out;
+      if (!scanState.cancel) {
+        setStatus(`✅ הושלמה סריקה: ${out.length} שלוחות.`);
+      }
+    } finally {
+      scanState.running = false;
+      scanState.paused = false;
+      scanState.cancel = false;
+      if (scanBtn) scanBtn.disabled = false;
+      updatePauseButton();
+    }
+  }
+
+  function loadPos(){
+    try { return JSON.parse(localStorage.getItem(POS_KEY) || 'null'); } catch(e){ return null; }
+  }
+  function savePos(pos){
+    try { localStorage.setItem(POS_KEY, JSON.stringify(pos)); } catch(e){}
+  }
+
+  function mount(){
+    tryAutoOpenUsersPage();
+    if (path !== '/ipbx/users.php' && path !== '/ipbx/users_edit.php') return;
+    if (document.getElementById(BOX_ID)) return;
+    injectCss();
+    const box = document.createElement('div');
+    box.id = BOX_ID;
+    box.innerHTML = `
+      <div class="head">
+        <div class="drag" data-x="drag">IPBX Users Scan v1.4.29</div>
+        <div class="headBtns">
+          <button type="button" data-x="min">_</button>
+        </div>
+      </div>
+      <div data-x="body">
+        <div class="muted">סורק את כל הקישורים מסוג users.php?id=... במסך USERS / USERS EDIT, כולל עמודים הבאים, ומחזיר פרטים אמיתיים מכל שלוחה. כפתור רשימת קישורים מציג קישורים לחיצים אמיתיים.</div>
+        <div class="row">
+          <button type="button" class="primary" data-x="scan">סרוק שלוחות</button>
+          <button type="button" data-x="pause" disabled>עצור</button>
+          <button type="button" data-x="export">ייצא CSV</button>
+          <button type="button" data-x="links">רשימת קישורים</button>
+        </div>
+        <div class="status" data-x="status">מוכן לסריקה.</div>
+        <div class="results" data-x="results"><div style="padding:10px">אין עדיין תוצאות</div></div>
+      </div>
+    `;
+    document.body.appendChild(box);
+
+    const saved = loadPos();
+    if (saved && typeof saved.left === 'number' && typeof saved.top === 'number') {
+      box.style.left = saved.left + 'px';
+      box.style.top = saved.top + 'px';
+      box.style.right = 'auto';
+    } else {
+      box.style.right = '14px';
+      box.style.left = 'auto';
+      box.style.top = '14px';
+    }
+
+    let dragging = false;
+    let dx = 0, dy = 0;
+    const dragHandle = box.querySelector('[data-x="drag"]');
+
+    dragHandle.addEventListener('mousedown', (ev) => {
+      if (ev.button !== 0) return;
+      dragging = true;
+      const r = box.getBoundingClientRect();
+      dx = ev.clientX - r.left;
+      dy = ev.clientY - r.top;
+      ev.preventDefault();
+    });
+    window.addEventListener('mousemove', (ev) => {
+      if (!dragging) return;
+      const left = Math.max(6, Math.min(window.innerWidth - 100, ev.clientX - dx));
+      const top = Math.max(6, Math.min(window.innerHeight - 40, ev.clientY - dy));
+      box.style.left = left + 'px';
+      box.style.top = top + 'px';
+      box.style.right = 'auto';
+      savePos({ left, top });
+    });
+    window.addEventListener('mouseup', () => { dragging = false; });
+
+    box.querySelector('[data-x="scan"]').addEventListener('click', () => scanAllUsers());
+    box.querySelector('[data-x="pause"]').addEventListener('click', () => {
+      if (!scanState.running) return;
+      scanState.paused = !scanState.paused;
+      updatePauseButton();
+      setStatus(scanState.paused ? 'הסריקה מושהית. לחץ המשך כדי להמשיך.' : 'ממשיך סריקה...');
+    });
+    box.querySelector('[data-x="export"]').addEventListener('click', () => {
+      const rows = window.__bmbyUsersScanRows || [];
+      if (!rows.length) { setStatus('אין תוצאות לייצוא עדיין.'); return; }
+      download('bmby_ipbx_users_scan.csv', toCsv(rows), 'text/csv;charset=utf-8');
+    });
+    box.querySelector('[data-x="links"]').addEventListener('click', async () => {
+      const links = await collectAllUserLinks();
+      setStatus(`נמצאו ${links.length} קישורי שלוחות.`);
+      renderLinks(links);
+    });
+
+    const body = box.querySelector('[data-x="body"]');
+    updatePauseButton();
+    box.querySelector('[data-x="min"]').addEventListener('click', () => {
+      const hidden = body.classList.toggle('hiddenBody');
+      box.classList.toggle('min', hidden);
+    });
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, { once:true });
+  else mount();
+}
+
+
 function __bootIPBX_DID_HELPER__(){
   (function () {
     'use strict';
@@ -4965,9 +6300,13 @@ function applyFilter(qRaw) {
   const host = location.hostname;
   const path = location.pathname || '';
   const isNihul = path.startsWith('/nihul/') && (host === 'www.bmby.com' || host === 'bmby.com');
-  const isIPBX = (path === '/ipbx/dialplan_edit.php') && (host === 'voip.bmby.com' || host === 'voip2.bmby.com' || host === '82.166.228.179' || host === '82.166.228.180');
+  const isIPBXDialplan = (path === '/ipbx/dialplan_edit.php') && (host === 'voip.bmby.com' || host === 'voip2.bmby.com' || host === '82.166.228.179' || host === '82.166.228.180');
+  const isIPBXPartition = (path === '/ipbx/partition_selection.php') && (host === 'voip.bmby.com' || host === 'voip2.bmby.com' || host === '82.166.228.179' || host === '82.166.228.180');
+  const isIPBXUsersEdit = (path === '/ipbx/users_edit.php') && (host === 'voip.bmby.com' || host === 'voip2.bmby.com' || host === '82.166.228.179' || host === '82.166.228.180');
   if (isNihul) { try { __bootNIHUL_DASHBOARD__(); } catch(e){ console.error('[BMBY PROD] NIHUL boot error', e); } /* no-return */ }
-  if (isIPBX) { try { __bootIPBX_DID_HELPER__(); } catch(e){ console.error('[BMBY PROD] IPBX boot error', e); } /* no-return */ }
+  if (isIPBXDialplan) { try { __bootIPBX_DID_HELPER__(); } catch(e){ console.error('[BMBY PROD] IPBX boot error', e); } /* no-return */ }
+  if (isIPBXPartition) { try { __bootIPBX_PARTITION_PREFIX_HELPER__(); } catch(e){ console.error('[BMBY PROD] IPBX partition boot error', e); } /* no-return */ }
+  if (isIPBXUsersEdit) { try { __bootIPBX_USERS_SCAN_HELPER__(); } catch(e){ console.error('[BMBY PROD] IPBX users scan boot error', e); } /* no-return */ }
 })();
 
 
