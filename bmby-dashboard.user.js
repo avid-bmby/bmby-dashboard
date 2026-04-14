@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         BMBY Dashboard (PROD) v1.4.29 – Nihul + IPBX MAINWORKING + Dictionary + Partition Prefix + Users Scan + Pause/Resume
+// @name         BMBY Dashboard (PROD) v1.4.46 – Nihul + IPBX MAINWORKING + Dictionary + Partition Prefix + IPBX HUB
 // @namespace    https://bmby.com/
-// @version      1.4.29
-// @description  Unified PROD: Nihul dashboard + IPBX DID Helper + Dictionary Search + IPBX Partition Prefix Search + users scan + working links list + pause/resume + version sync.
+// @version      1.4.47
+// @description  Unified PROD: full dashboard + IPBX DID Helper + Dictionary Search + Partition Prefix + main HUB on partition page and USERS/AGENTS scan panels, preserving existing USERS logic. Removed PIN column; kept AUTO IN REC/AUTO OUT REC fields. Added AGENTS CF Always/No Answer and fixed HUB navigation back to USERS. Added initial IVR MENU module and scanner.
 // @run-at       document-end
 // @updateURL    https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
 // @downloadURL  https://raw.githubusercontent.com/avid-bmby/bmby-dashboard/main/bmby-dashboard.user.js
@@ -26,6 +26,18 @@
 // @match        http://voip2.bmby.com/ipbx/users.php*
 // @match        http://82.166.228.179/ipbx/users.php*
 // @match        http://82.166.228.180/ipbx/users.php*
+// @match        http://voip.bmby.com/ipbx/agents_list.php*
+// @match        http://voip2.bmby.com/ipbx/agents_list.php*
+// @match        http://82.166.228.179/ipbx/agents_list.php*
+// @match        http://82.166.228.180/ipbx/agents_list.php*
+// @match        http://voip.bmby.com/ipbx/agents.php*
+// @match        http://voip2.bmby.com/ipbx/agents.php*
+// @match        http://82.166.228.179/ipbx/agents.php*
+// @match        http://82.166.228.180/ipbx/agents.php*
+// @match        http://voip.bmby.com/ipbx/ivr_edit.php*
+// @match        http://voip2.bmby.com/ipbx/ivr_edit.php*
+// @match        http://82.166.228.179/ipbx/ivr_edit.php*
+// @match        http://82.166.228.180/ipbx/ivr_edit.php*
 // @connect      www.bmby.com
 // @connect      bmby.com
 // @connect      voip.bmby.com
@@ -916,7 +928,17 @@ const BMBY_GLOBAL_UID_TO_HIGHLIGHT = "BMBY_GLOBAL_UID_TO_HIGHLIGHT";
   }
   .bmby-pill.prod{ border-color: rgba(124,58,237,.35); background: rgba(124,58,237,.08); color:#3b1d9a; }
 
-  .bmby-tabs{ display:flex; gap:8px; padding:10px 14px; }
+  .bmby-tabs, .bmby-cats{
+    display:flex; gap:8px; padding:10px 14px; flex-wrap:wrap;
+  }
+  .bmby-cats{
+    padding-bottom:6px;
+    border-bottom:1px solid var(--bmby-border);
+    background:linear-gradient(180deg,#fafbff 0%, #f7f8fb 100%);
+  }
+  .bmby-tabs{
+    padding-top:8px;
+  }
   .bmby-tab{
     padding:8px 10px; border-radius:999px;
     border:1px solid var(--bmby-border);
@@ -924,6 +946,17 @@ const BMBY_GLOBAL_UID_TO_HIGHLIGHT = "BMBY_GLOBAL_UID_TO_HIGHLIGHT";
     font:800 12px/1 var(--bmby-font);
   }
   .bmby-tab.active{ border-color: rgba(37,99,235,.35); background: rgba(37,99,235,.08); color:#0b3aa6; }
+  .bmby-tab.group{
+    font-weight:900;
+    background:rgba(124,58,237,.06);
+    border-color:rgba(124,58,237,.18);
+    color:#4c1d95;
+  }
+  .bmby-tab.group.active{
+    background:rgba(124,58,237,.12);
+    border-color:rgba(124,58,237,.34);
+    color:#3b1d9a;
+  }
 
   .bmby-body{ padding:14px; }
   .bmby-card{
@@ -1115,14 +1148,66 @@ const BMBY_GLOBAL_UID_TO_HIGHLIGHT = "BMBY_GLOBAL_UID_TO_HIGHLIGHT";
     }
 
     const TABS = [
-      { id: "voip", label: "VOIP" },
-      { id: "passwords", label: "סיסמאות" },
-      { id: "extensions", label: "שלוחות" },
-      { id: "users", label: "משתמשים" },
-      { id: "editproject", label: "פרויקט" },
-      { id: "boards", label: "Boards" },
-      { id: "dictionary", label: "מילון" },
+      { id: "voip", label: "VOIP", group: "telephony" },
+      { id: "extensions", label: "שלוחות", group: "telephony" },
+      { id: "passwords", label: "סיסמאות", group: "interfaces" },
+      { id: "boards", label: "Boards", group: "interfaces" },
+      { id: "dictionary", label: "מילון", group: "interfaces" },
+      { id: "users", label: "משתמשים", group: "general" },
+      { id: "editproject", label: "פרויקט", group: "general" },
     ];
+
+    const TAB_GROUPS = [
+      { id: "telephony", label: "טלפוניה" },
+      { id: "interfaces", label: "ממשקים" },
+      { id: "general", label: "כללי" },
+    ];
+
+    function getTabDef(tabId) {
+      return TABS.find(t => t.id === tabId) || null;
+    }
+
+    function getGroupForTab(tabId) {
+      return getTabDef(tabId)?.group || "telephony";
+    }
+
+    function getTabsForGroup(groupId) {
+      return TABS.filter(t => t.group === groupId);
+    }
+
+    function renderGroupTabs(activeGroup, activeTabId) {
+      const dash = document.getElementById(UI.dashId);
+      if (!dash) return;
+
+      const catsEl = dash.querySelector('[data-x="categories"]');
+      const tabsEl = dash.querySelector('[data-x="tabs"]');
+      if (!catsEl || !tabsEl) return;
+
+      catsEl.innerHTML = "";
+      for (const g of TAB_GROUPS) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "bmby-tab group" + (g.id === activeGroup ? " active" : "");
+        btn.textContent = g.label;
+        btn.dataset.group = g.id;
+        btn.addEventListener("click", () => {
+          const firstTab = getTabsForGroup(g.id)[0]?.id || "voip";
+          setActiveTab(firstTab);
+        });
+        catsEl.appendChild(btn);
+      }
+
+      tabsEl.innerHTML = "";
+      for (const t of getTabsForGroup(activeGroup)) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "bmby-tab" + (t.id === activeTabId ? " active" : "");
+        btn.textContent = t.label;
+        btn.dataset.tab = t.id;
+        btn.addEventListener("click", () => setActiveTab(t.id));
+        tabsEl.appendChild(btn);
+      }
+    }
 
     function buildDashboard() {
       if (document.getElementById(UI.dashId)) return;
@@ -1139,6 +1224,7 @@ const BMBY_GLOBAL_UID_TO_HIGHLIGHT = "BMBY_GLOBAL_UID_TO_HIGHLIGHT";
           <span style="margin-right:auto"></span>
           <button class="bmby-btn secondary" data-x="close">סגור</button>
         </div>
+        <div class="bmby-cats" data-x="categories"></div>
         <div class="bmby-tabs" data-x="tabs"></div>
         <div class="bmby-body">
           <div class="bmby-card" data-x="panel"></div>
@@ -1152,17 +1238,6 @@ const BMBY_GLOBAL_UID_TO_HIGHLIGHT = "BMBY_GLOBAL_UID_TO_HIGHLIGHT";
       applyDashPosition(dash);
 
       dash.querySelector('[data-x="close"]').addEventListener("click", closeDashboard);
-
-      const tabsEl = dash.querySelector('[data-x="tabs"]');
-      for (const t of TABS) {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "bmby-tab";
-        btn.textContent = t.label;
-        btn.dataset.tab = t.id;
-        btn.addEventListener("click", () => setActiveTab(t.id));
-        tabsEl.appendChild(btn);
-      }
 
       const saved = Store.get("activeTab", "voip");
       setActiveTab(saved);
@@ -1198,34 +1273,34 @@ const BMBY_GLOBAL_UID_TO_HIGHLIGHT = "BMBY_GLOBAL_UID_TO_HIGHLIGHT";
     }
 
     function setActiveTab(tabId) {
-      Store.set("activeTab", tabId);
+      const safeTabId = getTabDef(tabId)?.id || "voip";
+      Store.set("activeTab", safeTabId);
 
       const dash = document.getElementById(UI.dashId);
       if (!dash) return;
 
-      dash.querySelectorAll(".bmby-tab").forEach((b) => {
-        b.classList.toggle("active", b.dataset.tab === tabId);
-      });
+      const activeGroup = getGroupForTab(safeTabId);
+      renderGroupTabs(activeGroup, safeTabId);
 
       const panel = dash.querySelector('[data-x="panel"]');
       if (!panel) return;
 
-      if (tabId === "voip") panel.innerHTML = renderVoipPanel();
-      else if (tabId === "passwords") panel.innerHTML = renderPasswordsPanel();
-      else if (tabId === "extensions") panel.innerHTML = renderExtensionsPanel();
-      else if (tabId === "users") panel.innerHTML = renderUsersPanel();
-      else if (tabId === "editproject") panel.innerHTML = renderEditProjectPanel();
-      else if (tabId === "boards") panel.innerHTML = renderBoardsPanel();
-      else if (tabId === "dictionary") panel.innerHTML = renderDictionaryPanel();
-      else panel.innerHTML = renderComingSoon(tabId);
+      if (safeTabId === "voip") panel.innerHTML = renderVoipPanel();
+      else if (safeTabId === "passwords") panel.innerHTML = renderPasswordsPanel();
+      else if (safeTabId === "extensions") panel.innerHTML = renderExtensionsPanel();
+      else if (safeTabId === "users") panel.innerHTML = renderUsersPanel();
+      else if (safeTabId === "editproject") panel.innerHTML = renderEditProjectPanel();
+      else if (safeTabId === "boards") panel.innerHTML = renderBoardsPanel();
+      else if (safeTabId === "dictionary") panel.innerHTML = renderDictionaryPanel();
+      else panel.innerHTML = renderComingSoon(safeTabId);
 
-      if (tabId === "voip") bindVoipPanel(panel);
-      if (tabId === "passwords") bindPasswordsPanel(panel);
-      if (tabId === "extensions") bindExtensionsPanel(panel);
-      if (tabId === "users") bindUsersPanel(panel);
-      if (tabId === "editproject") bindEditProjectPanel(panel);
-      if (tabId === "boards") bindBoardsPanel(panel);
-      if (tabId === "dictionary") bindDictionaryPanel(panel);
+      if (safeTabId === "voip") bindVoipPanel(panel);
+      if (safeTabId === "passwords") bindPasswordsPanel(panel);
+      if (safeTabId === "extensions") bindExtensionsPanel(panel);
+      if (safeTabId === "users") bindUsersPanel(panel);
+      if (safeTabId === "editproject") bindEditProjectPanel(panel);
+      if (safeTabId === "boards") bindBoardsPanel(panel);
+      if (safeTabId === "dictionary") bindDictionaryPanel(panel);
     }
 
 
@@ -1773,58 +1848,141 @@ async function fetchTextSmart(url) {
   const totals = { total: 0, inactive: 0, active: 0, unknown: 0, fetchErrors: 0 };
   let rawHit = false;
 
+  const CFG = {
+    concurrency: 1,
+    perRequestDelayMs: 950,
+    baseBackoffMs: 2500,
+    maxBackoffMs: 30000,
+    maxRetries429: 5,
+    maxRetriesOther: 2,
+    requestTimeoutMs: 20000,
+    cooldownAfter429Ms: 12000,
+    jitterMs: 450,
+  };
+
+  const sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const withJitter = (ms) => Math.max(0, Math.round(ms + Math.random() * CFG.jitterMs));
+  const parseRetryAfterMs = (res) => {
+    try {
+      const raw = res && res.headers && typeof res.headers.get === 'function' ? res.headers.get('Retry-After') : null;
+      if (!raw) return 0;
+      const num = Number(String(raw).trim());
+      if (Number.isFinite(num) && num >= 0) return Math.round(num * 1000);
+      const ts = Date.parse(raw);
+      if (!Number.isNaN(ts)) return Math.max(0, ts - Date.now());
+    } catch(e) {}
+    return 0;
+  };
+
+  async function fetchTextWithTimeout(url, fetchOpts = {}, timeoutMs = CFG.requestTimeoutMs) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { ...fetchOpts, signal: ctrl.signal });
+      const text = await res.text();
+      return { ok: res.ok, status: res.status, text, headers: res.headers };
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  async function fetchWithRateLimitRetry(url, fetchOpts = {}, meta = {}) {
+    const kind = meta.kind || 'request';
+    const id = meta.id || null;
+    const maxAttempts = 1 + Math.max(CFG.maxRetries429, CFG.maxRetriesOther);
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const resp = await fetchTextWithTimeout(url, fetchOpts, CFG.requestTimeoutMs);
+
+        if (resp.status === 429) {
+          totals.fetchErrors++;
+          const retryAfterMs = parseRetryAfterMs(resp);
+          const expMs = Math.min(CFG.maxBackoffMs, CFG.baseBackoffMs * Math.pow(2, Math.min(attempt - 1, 6)));
+          const waitMs = withJitter(Math.max(retryAfterMs || 0, expMs, CFG.cooldownAfter429Ms));
+          if (samples.length < 25) samples.push({ id, status: 'rate-limit', kind, http: 429, attempt, waitMs, url });
+          if (attempt > CFG.maxRetries429 + 1) return { ok: false, status: 429, text: resp.text, headers: resp.headers, gaveUp: true };
+          console.warn(logPrefix, `${kind} 429`, { id, attempt, waitMs, url });
+          if (typeof onProgress === 'function') {
+            try { onProgress({ ...totals, done: totals.active + totals.inactive + totals.unknown, total: ids.length, rateLimited: true, currentId: id, waitMs }); } catch(_) {}
+          }
+          await sleepMs(waitMs);
+          continue;
+        }
+
+        if (!resp.ok) {
+          totals.fetchErrors++;
+          if (attempt <= CFG.maxRetriesOther + 1 && resp.status >= 500) {
+            const waitMs = withJitter(Math.min(CFG.maxBackoffMs, 1200 * attempt));
+            if (samples.length < 20) samples.push({ id, status: 'retry-http', kind, http: resp.status, attempt, waitMs, url });
+            await sleepMs(waitMs);
+            continue;
+          }
+        }
+
+        return resp;
+      } catch (e) {
+        totals.fetchErrors++;
+        const isAbort = /abort/i.test(String(e || ''));
+        if (attempt <= CFG.maxRetriesOther + 1) {
+          const waitMs = withJitter(Math.min(CFG.maxBackoffMs, isAbort ? 1500 * attempt : 1000 * attempt));
+          if (samples.length < 20) samples.push({ id, status: isAbort ? 'timeout-retry' : 'fetch-exception-retry', kind, attempt, waitMs, note: String(e), url });
+          await sleepMs(waitMs);
+          continue;
+        }
+        if (samples.length < 20) samples.push({ id, status: isAbort ? 'timeout' : 'fetch-exception', kind, note: String(e), url });
+        return { ok: false, status: 0, text: '', error: String(e), gaveUp: true };
+      }
+    }
+
+    return { ok: false, status: 0, text: '', gaveUp: true };
+  }
+
   // 1) fetch Users page (AddProject2) HTML
-  let usersHtml = "";
-  try{
-    const r = await fetch(usersUrl, { credentials: "include" });
-    usersHtml = await r.text();
-    if(!r.ok) throw new Error(`users page status ${r.status}`);
-  }catch(e){
-    totals.fetchErrors++;
-    samples.push({ status:"users-page-fetch-error", note:String(e), usersUrl });
-    console.warn(logPrefix, "users page fetch error:", e);
-    return { ...totals, ids, samples, rawHit, usersUrl };
-  }
+  {
+    const pageResp = await fetchWithRateLimitRetry(usersUrl, { credentials: "include", redirect: "follow", cache: "no-store" }, { kind: 'users-page' });
+    const usersHtml = String(pageResp?.text || '');
 
-  // 2) extract UserIDs from HTML (works even when there are no explicit EditUser links)
-  // Prefer explicit EditUser.php?UserID=... if exists, otherwise fallback to any UserID=... occurrences.
-  const seen = new Set();
+    if(!pageResp?.ok){
+      samples.push({ status:'users-page-fetch-error', http: pageResp?.status || 0, note: pageResp?.error || `users page status ${pageResp?.status || 0}`, usersUrl });
+      console.warn(logPrefix, 'users page fetch error:', pageResp);
+      return { ...totals, ids, samples, rawHit, usersUrl, debugSamples: samples, scanned: 0, limited: false };
+    }
 
-  // Explicit EditUser occurrences
-  for(const m of usersHtml.matchAll(/EditUser\.php\?[^"'<>]*\bUserID=(\d{3,})\b/gi)){
-    const id = m[1];
-    if(!seen.has(id)){ seen.add(id); ids.push(id); }
-  }
-
-  if(ids.length === 0){
-    // Fallback: raw UserID params anywhere in HTML
-    const raw = [];
-    for(const m of usersHtml.matchAll(/\bUserID=(\d{3,})\b/gi)) raw.push(m[1]);
-    // Also handle HTML-encoded '=' (rare)
-    for(const m of usersHtml.matchAll(/\bUserID&#0*61;(\d{3,})\b/gi)) raw.push(m[1]);
-
-    rawHit = raw.length > 0;
-    for(const id of raw){
+    // 2) extract UserIDs from HTML (works even when there are no explicit EditUser links)
+    const seen = new Set();
+    for(const m of usersHtml.matchAll(/EditUser\.php\?[^"'<>]*\bUserID=(\d{3,})\b/gi)){
+      const id = m[1];
       if(!seen.has(id)){ seen.add(id); ids.push(id); }
+    }
+
+    if(ids.length === 0){
+      const raw = [];
+      for(const m of usersHtml.matchAll(/\bUserID=(\d{3,})\b/gi)) raw.push(m[1]);
+      for(const m of usersHtml.matchAll(/\bUserID&#0*61;(\d{3,})\b/gi)) raw.push(m[1]);
+      rawHit = raw.length > 0;
+      for(const id of raw){
+        if(!seen.has(id)){ seen.add(id); ids.push(id); }
+      }
     }
   }
 
   totals.total = ids.length;
 
   if(ids.length === 0){
-    samples.push({ status:"no-ids", note:"No UserID occurrences found on AddProject2 users page.", usersUrl, htmlLen: usersHtml.length });
-    console.warn(logPrefix, "No ids found.", { usersUrl, htmlLen: usersHtml.length });
-    return { ...totals, ids, samples, rawHit, usersUrl };
+    samples.push({ status:'no-ids', note:'No UserID occurrences found on AddProject2 users page.', usersUrl });
+    console.warn(logPrefix, 'No ids found.', { usersUrl });
+    return { ...totals, ids, samples, rawHit, usersUrl, debugSamples: samples, scanned: 0, limited: false };
   }
 
-  console.log(logPrefix, "Found ids total:", totals.total, "sample:", ids.slice(0,10));
-
-  // 3) scan each EditUser page HTML and look for class='notActive'
-  const CONCURRENCY = 8;
-  let idx = 0;
+  console.log(logPrefix, 'Found ids total:', totals.total, 'sample:', ids.slice(0,10));
 
   const hasDetails = (t) => /wrappUserDetails/i.test(t);
   const hasNotActive = (t) => /class\s*=\s*["']notActive["']/i.test(t);
+
+  let idx = 0;
+  let scanned = 0;
+  let limited = false;
 
   async function worker(){
     while(true){
@@ -1834,45 +1992,52 @@ async function fetchTextSmart(url) {
       const id = ids[my];
       const url = `/preferences/EditUser.php?UserID=${encodeURIComponent(id)}&ProjectID=${encodeURIComponent(projectId)}&FromNihul=1`;
 
-      try{
-        const r = await fetch(url, { credentials:"include", redirect:"follow" });
-        const t = await r.text();
+      if (my > 0) await sleepMs(withJitter(CFG.perRequestDelayMs));
 
-        const detailsOk = hasDetails(t);
-        const inactive = detailsOk && hasNotActive(t);
+      const r = await fetchWithRateLimitRetry(url, { credentials:'include', redirect:'follow', cache:'no-store' }, { kind: 'edit-user', id });
+      const t = String(r?.text || '');
+      scanned++;
 
-        if(!r.ok){
-          totals.fetchErrors++;
-          if(samples.length < 20) samples.push({ id, status:"fetch-error", http:r.status, url });
-        }else if(!detailsOk){
-          totals.unknown++;
-          if(samples.length < 20) samples.push({ id, status:"unknown", note:"No wrappUserDetails in response", len:t.length, url });
-        }else if(inactive){
-          totals.inactive++;
-          if(samples.length < 50) samples.push({ id, status:"inactive", len:t.length, url });
-        }else{
-          totals.active++;
-          if(samples.length < 20) samples.push({ id, status:"active", len:t.length, url });
-        }
+      const detailsOk = hasDetails(t);
+      const inactive = detailsOk && hasNotActive(t);
 
-      }catch(e){
-        totals.fetchErrors++;
-        if(samples.length < 20) samples.push({ id, status:"fetch-exception", note:String(e), url });
+      if(!r?.ok){
+        if(r?.status === 429) limited = true;
+        if(samples.length < 20) samples.push({ id, status:'fetch-error', http:r?.status || 0, url });
+      }else if(!detailsOk){
+        totals.unknown++;
+        if(samples.length < 20) samples.push({ id, status:'unknown', note:'No wrappUserDetails in response', len:t.length, url });
+      }else if(inactive){
+        totals.inactive++;
+        if(samples.length < 50) samples.push({ id, status:'inactive', len:t.length, url });
+      }else{
+        totals.active++;
+        if(samples.length < 20) samples.push({ id, status:'active', len:t.length, url });
       }
 
-      if(typeof onProgress === "function"){
-        try{ onProgress({ ...totals, done: my+1, total: ids.length }); }catch(_){}
+      if(typeof onProgress === 'function'){
+        try{
+          onProgress({
+            ...totals,
+            done: scanned,
+            total: ids.length,
+            scanned,
+            currentId: id,
+            remaining: Math.max(0, ids.length - scanned),
+            limited,
+          });
+        }catch(_){}
       }
     }
   }
 
   const workers = [];
-  for(let i=0;i<CONCURRENCY;i++) workers.push(worker());
+  for(let i=0;i<CFG.concurrency;i++) workers.push(worker());
   await Promise.all(workers);
 
-  console.log(logPrefix, "Done:", { inactive: totals.inactive, active: totals.active, unknown: totals.unknown, fetchErrors: totals.fetchErrors });
+  console.log(logPrefix, 'Done:', { inactive: totals.inactive, active: totals.active, unknown: totals.unknown, fetchErrors: totals.fetchErrors, limited, scanned });
 
-  return { ...totals, ids, samples, rawHit, usersUrl };
+  return { ...totals, ids, samples, rawHit, usersUrl, debugSamples: samples, scanned, limited };
 }
 
 
@@ -4801,6 +4966,7 @@ function __bootIPBX_PARTITION_PREFIX_HELPER__(){
   const CSS_ID = 'bmby-ipbx-prefix-style';
   const BOX_ID = 'bmby-ipbx-prefix-box';
   const STORE_KEY = 'BMBY__IPBX_PREFIX_LAST';
+  const HUB_CTX_KEY = 'BMBY__IPBX_HUB_CONTEXT';
 
   function injectCss(){
     if (document.getElementById(CSS_ID)) return;
@@ -4827,7 +4993,58 @@ function __bootIPBX_PARTITION_PREFIX_HELPER__(){
 
   function saveLast(val){ try{ localStorage.setItem(STORE_KEY, val||''); }catch(e){} }
   function loadLast(){ try{ return localStorage.getItem(STORE_KEY)||''; }catch(e){ return ''; } }
-  function norm(s){ return String(s||'').replace(/[\s\u00A0\u200E\u200F]+/g,' ').trim(); }
+  function saveHubContext(ctx){ try { localStorage.setItem(HUB_CTX_KEY, JSON.stringify(ctx || {})); } catch(e){} }
+  function loadHubContext(){ try { return JSON.parse(localStorage.getItem(HUB_CTX_KEY) || '{}') || {}; } catch(e){ return {}; } }
+  function dispatchHubModule(name){ try { localStorage.setItem('BMBY__IPBX_HUB_TARGET_MODULE', String(name||'')); } catch(e){} try { window.dispatchEvent(new CustomEvent('bmby-ipbx-open-module', { detail:{ module:name||'' } })); } catch(e){} }
+  function norm(s){ return String(s||'').replace(/[\s ‎‏]+/g,' ').trim(); }
+  function setSelectedMode(box, item){
+    if (!box) return;
+    box.setAttribute('data-mode','selected');
+    const title = box.querySelector('[data-x="title"]');
+    const desc = box.querySelector('[data-x="desc"]');
+    const inputRow = box.querySelector('[data-x="inputRow"]');
+    const actionsRow = box.querySelector('[data-x="actionsRow"]');
+    const results = box.querySelector('[data-x="results"]');
+    const selected = box.querySelector('[data-x="selected"]');
+    if (title) title.textContent = 'IPBX HUB READY';
+    if (desc) desc.textContent = 'המרכזייה נבחרה. פתח מודול מתוך ה-HUB הראשי. לחיפוש חדש לחץ "חיפוש חדש".';
+    if (inputRow) inputRow.style.display = 'none';
+    if (results) results.style.display = 'none';
+    if (selected) {
+      selected.style.display = 'block';
+      selected.innerHTML = '<div><strong>PREFIX:</strong> ' + (item && item.prefix ? item.prefix : '—') + '</div>' +
+        '<div><strong>Partition:</strong> ' + (item && item.partition ? item.partition : '—') + '</div>' +
+        '<div><strong>Name:</strong> ' + (item && item.name ? item.name : '—') + '</div>';
+    }
+    if (actionsRow) actionsRow.innerHTML = '<button type="button" class="primary" data-x="openUsers">USERS</button><button type="button" data-x="openAgents">AGENTS</button><button type="button" data-x="openIvrMenu">IVR MENU</button><button type="button" data-x="openIvrSwitch">IVR SWITCH</button><button type="button" data-x="newSearch">חיפוש חדש</button>';
+    const btn = box.querySelector('[data-x="newSearch"]');
+    if (btn) btn.addEventListener('click', () => setSearchMode(box));
+    const go = (url) => { try { if (url) location.assign(url); } catch(e){} };
+    const uBtn = box.querySelector('[data-x="openUsers"]');
+    if (uBtn) uBtn.addEventListener('click', () => go('http://voip2.bmby.com/ipbx/users_edit.php'));
+    const aBtn = box.querySelector('[data-x="openAgents"]');
+    if (aBtn) aBtn.addEventListener('click', () => go('http://voip2.bmby.com/ipbx/agents_list.php'));
+    const mBtn = box.querySelector('[data-x="openIvrMenu"]');
+    if (mBtn) mBtn.addEventListener('click', () => go('http://voip2.bmby.com/ipbx/ivr_edit.php?type=MENU'));
+    const sBtn = box.querySelector('[data-x="openIvrSwitch"]');
+    if (sBtn) sBtn.addEventListener('click', () => goToModule('IVR SWITCH'));
+  }
+  function setSearchMode(box){
+    if (!box) return;
+    box.setAttribute('data-mode','search');
+    const title = box.querySelector('[data-x="title"]');
+    const desc = box.querySelector('[data-x="desc"]');
+    const inputRow = box.querySelector('[data-x="inputRow"]');
+    const actionsRow = box.querySelector('[data-x="actionsRow"]');
+    const results = box.querySelector('[data-x="results"]');
+    const selected = box.querySelector('[data-x="selected"]');
+    if (title) title.textContent = 'IPBX Prefix Search';
+    if (desc) desc.textContent = 'חיפוש לפי PREFIX (העמודה השנייה). בחירת תוצאה תבחר את המרכזייה ותעדכן את ה-HUB הראשי.';
+    if (inputRow) inputRow.style.display = 'flex';
+    if (results) { results.style.display = ''; results.innerHTML = '<div class="item">הקלד PREFIX ולחץ חפש</div>'; }
+    if (selected) { selected.style.display = 'none'; selected.innerHTML = ''; }
+    if (actionsRow) actionsRow.innerHTML = '<button type="button" data-x="clear">נקה</button><button type="button" data-x="refresh">רענן רשימה</button>';
+  }
 
   function getRows(){
     return Array.from(document.querySelectorAll('tr')).filter(tr => {
@@ -4855,23 +5072,23 @@ function __bootIPBX_PARTITION_PREFIX_HELPER__(){
   function clearHits(){ document.querySelectorAll('tr.bmbyPrefixHit').forEach(tr => tr.classList.remove('bmbyPrefixHit')); }
   function hitRow(tr){ clearHits(); try{ tr.classList.add('bmbyPrefixHit'); tr.scrollIntoView({behavior:'smooth', block:'center'}); }catch(e){} }
 
-  function redirectToUsersPage(){
-    const target = 'http://voip2.bmby.com/ipbx/users_edit.php';
-    const go = () => {
-      try {
-        if (location.href !== target) location.assign(target);
-      } catch(e) {
-        try { location.href = target; } catch(_) {}
-      }
-    };
-    // ChangePartition is async; give it enough time before navigation.
-    setTimeout(go, 1200);
-    setTimeout(go, 2200);
+  function notifyHubRefresh(){
+    try { window.dispatchEvent(new CustomEvent('bmby-ipbx-context-updated')); } catch(e){}
   }
 
   function runPartition(item){
     hitRow(item.tr);
     saveLast(item.prefix);
+    saveHubContext({
+      prefix: item.prefix || '',
+      partition: item.partition || '',
+      name: item.name || '',
+      host: location.host || '',
+      page: location.pathname || '',
+      selectedAt: new Date().toISOString()
+    });
+    const box = document.getElementById(BOX_ID);
+    setSelectedMode(box, item);
     const el = item.clickEl;
     let clicked = false;
     if (el && typeof el.click === 'function') {
@@ -4880,7 +5097,9 @@ function __bootIPBX_PARTITION_PREFIX_HELPER__(){
     if (!clicked) {
       try { (0,eval)(item.onclick); clicked = true; } catch(e) { console.error('[BMBY PREFIX] click failed', e); }
     }
-    redirectToUsersPage();
+    setTimeout(notifyHubRefresh, 150);
+    setTimeout(notifyHubRefresh, 700);
+    setTimeout(function(){ setSelectedMode(document.getElementById(BOX_ID), item); }, 1200);
   }
 
   function renderResults(root, items){
@@ -4917,33 +5136,43 @@ function __bootIPBX_PARTITION_PREFIX_HELPER__(){
     const box = document.createElement('div');
     box.id = BOX_ID;
     box.innerHTML = `
-      <div style="font-weight:900">IPBX Prefix Search</div>
-      <div class="muted">חיפוש לפי PREFIX (העמודה השנייה). לחיצה על תוצאה תעביר למרכזייה.</div>
-      <div class="row">
+      <div style="font-weight:900" data-x="title">IPBX Prefix Search</div>
+      <div class="muted" data-x="desc">חיפוש לפי PREFIX (העמודה השנייה). בחירת תוצאה תבחר את המרכזייה ותעדכן את ה-HUB הראשי.</div>
+      <div class="row" data-x="inputRow">
         <input type="text" data-x="prefix" placeholder="חפש PREFIX, למשל 5535">
         <button type="button" class="primary" data-x="search">חפש</button>
       </div>
-      <div class="row">
-        <button type="button" data-x="clear">נקה</button>
-        <button type="button" data-x="refresh">רענן רשימה</button>
-      </div>
+      <div class="row" data-x="actionsRow"></div>
+      <div class="selectedInfo muted" data-x="selected" style="display:none;margin-top:10px;padding:10px;border:1px solid rgba(0,0,0,.08);border-radius:12px;background:#fafafa"></div>
       <div class="results" data-x="results"></div>
     `;
     document.body.appendChild(box);
     const inp = box.querySelector('[data-x="prefix"]');
     inp.value = loadLast();
-    box.querySelector('[data-x="search"]').addEventListener('click', () => doSearch(box, false));
-    box.querySelector('[data-x="clear"]').addEventListener('click', () => { inp.value=''; saveLast(''); const results = box.querySelector('[data-x="results"]'); if (results) results.innerHTML = '<div class="item">הקלד PREFIX ולחץ חפש</div>'; clearHits(); inp.focus(); });
-    box.querySelector('[data-x="refresh"]').addEventListener('click', () => doSearch(box, false));
+    const bindSearchHandlers = function(){
+      const searchBtn = box.querySelector('[data-x="search"]');
+      if (searchBtn && !searchBtn.__bmbyBound) { searchBtn.__bmbyBound = true; searchBtn.addEventListener('click', () => doSearch(box, false)); }
+      const clearBtn = box.querySelector('[data-x="clear"]');
+      if (clearBtn && !clearBtn.__bmbyBound) { clearBtn.__bmbyBound = true; clearBtn.addEventListener('click', () => { inp.value=''; saveLast(''); const results = box.querySelector('[data-x="results"]'); if (results) results.innerHTML = '<div class="item">הקלד PREFIX ולחץ חפש</div>'; clearHits(); inp.focus(); }); }
+      const refreshBtn = box.querySelector('[data-x="refresh"]');
+      if (refreshBtn && !refreshBtn.__bmbyBound) { refreshBtn.__bmbyBound = true; refreshBtn.addEventListener('click', () => doSearch(box, false)); }
+    };
     inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(box, true); });
-    const results = box.querySelector('[data-x="results"]');
-    if (results) results.innerHTML = '<div class="item">הקלד PREFIX ולחץ חפש</div>';
+    const ctx = loadHubContext();
+    if (ctx && ctx.prefix) setSelectedMode(box, ctx);
+    else setSearchMode(box);
+    bindSearchHandlers();
+    window.addEventListener('bmby-ipbx-context-updated', () => {
+      const newCtx = loadHubContext();
+      if (newCtx && newCtx.prefix) setSelectedMode(box, newCtx);
+    });
+    const observer = new MutationObserver(() => bindSearchHandlers());
+    observer.observe(box, { childList:true, subtree:true });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, {once:true});
   else mount();
 }
-
 
 
 
@@ -4954,46 +5183,60 @@ function __bootIPBX_USERS_SCAN_HELPER__(){
   const path = location.pathname;
   const allowed = ['voip.bmby.com','voip2.bmby.com','82.166.228.179','82.166.228.180'];
   if (!allowed.includes(host)) return;
-  if (path !== '/ipbx/users.php' && path !== '/ipbx/users_edit.php') return;
+  if (path !== '/ipbx/partition_selection.php' && path !== '/ipbx/users.php' && path !== '/ipbx/users_edit.php') return;
 
   const BOX_ID = 'bmby-ipbx-users-scan-box';
-  const AUTO_USERS_KEY = 'BMBY__IPBX_AUTO_OPEN_USERS';
   const STYLE_ID = 'bmby-ipbx-users-scan-style';
-  const POS_KEY = 'bmby_ipbx_users_scan_box_pos_v2';
-  const LOG_PREFIX = '[BMBY USERS SCAN v1.4.29]';
+  const POS_KEY = 'bmby_ipbx_users_scan_box_pos_v3';
+  const HUB_CTX_KEY = 'BMBY__IPBX_HUB_CONTEXT';
+  const LOG_PREFIX = '[BMBY IPBX HUB v1.4.44]';
   const scanState = { running:false, paused:false, cancel:false };
+  const isPartitionPage = path === '/ipbx/partition_selection.php';
+  const isUsersPage = path === '/ipbx/users.php' || path === '/ipbx/users_edit.php';
+  const NAV_TARGETS = {
+    'USERS': 'http://voip2.bmby.com/ipbx/users_edit.php',
+    'AGENTS': 'http://voip2.bmby.com/ipbx/agents_list.php',
+    'IVR MENU': 'http://voip2.bmby.com/ipbx/ivr_edit.php?type=MENU',
+    'IVR SWITCH': ''
+  };
 
   function log(){ try { console.log(LOG_PREFIX, ...arguments); } catch(e){} }
-  function norm(s){ return String(s||'').replace(/[\u00A0\u200E\u200F\s]+/g,' ').trim(); }
+  function norm(s){ return String(s||'').replace(/[ ‎‏\s]+/g,' ').trim(); }
   function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
+  function loadHubContext(){ try { return JSON.parse(localStorage.getItem(HUB_CTX_KEY) || '{}') || {}; } catch(e){ return {}; } }
+  function dispatchHubModule(name){ try { localStorage.setItem('BMBY__IPBX_HUB_TARGET_MODULE', String(name||'')); } catch(e){} try { window.dispatchEvent(new CustomEvent('bmby-ipbx-open-module', { detail:{ module:name||'' } })); } catch(e){} }
 
-  function tryAutoOpenUsersPage(){
-    // v1.4.26: no extra refresh/redirect on entry to USERS EDIT.
-    return;
-  }
+  function tryAutoOpenUsersPage(){ return; }
 
   function injectCss(){
     if (document.getElementById(STYLE_ID)) return;
     const s = document.createElement('style');
     s.id = STYLE_ID;
     s.textContent = `
-      #${BOX_ID}{position:fixed;top:14px;right:14px;left:auto;z-index:2147483647;width:700px;max-width:calc(100vw - 28px);background:#fff;color:#111;border:1px solid rgba(0,0,0,.14);border-radius:16px;box-shadow:0 14px 40px rgba(0,0,0,.20);padding:12px;font:700 12px/1.45 Arial,sans-serif}
-      #${BOX_ID}.min{width:260px}
+      #${BOX_ID}{position:fixed;top:14px;right:14px;left:auto;z-index:2147483647;width:760px;max-width:calc(100vw - 28px);background:#fff;color:#111;border:1px solid rgba(0,0,0,.14);border-radius:16px;box-shadow:0 14px 40px rgba(0,0,0,.20);padding:12px;font:700 12px/1.45 Arial,sans-serif}
+      #${BOX_ID}.min{width:300px}
       #${BOX_ID} .head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
       #${BOX_ID} .drag{cursor:move;user-select:none;font-weight:900}
       #${BOX_ID} .headBtns{display:flex;gap:6px;align-items:center}
       #${BOX_ID} .row{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
+      #${BOX_ID} .hubMeta{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 8px}
+      #${BOX_ID} .metaPill{padding:4px 8px;border-radius:999px;background:#f5f5f5;border:1px solid rgba(0,0,0,.07);font-size:11px}
+      #${BOX_ID} .modules{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:8px 0 10px}
+      #${BOX_ID} .modBtn{padding:10px 8px;border:1px solid rgba(0,0,0,.12);border-radius:12px;background:#fff;cursor:pointer;font-weight:800;text-align:center}
+      #${BOX_ID} .modBtn.active{background:rgba(37,99,235,.10);border-color:rgba(37,99,235,.35);box-shadow:0 0 0 2px rgba(37,99,235,.08) inset}
+      #${BOX_ID} .modulePanel{display:none}
+      #${BOX_ID} .modulePanel.active{display:block}
+      #${BOX_ID} .placeholder{margin-top:8px;padding:12px;border-radius:12px;border:1px dashed rgba(0,0,0,.16);background:#fafafa}
+      #${BOX_ID} .muted{color:#666;font-size:11px}
       #${BOX_ID} button{padding:9px 10px;border:1px solid rgba(0,0,0,.16);background:#fff;border-radius:12px;cursor:pointer;font-weight:700}
       #${BOX_ID} button.primary{background:rgba(37,99,235,.10);border-color:rgba(37,99,235,.35)}
-      #${BOX_ID} .muted{color:#666;font-size:11px}
-      #${BOX_ID} .status{margin-top:8px;padding:8px 10px;border-radius:12px;background:#f7f7f7;border:1px solid rgba(0,0,0,.06);white-space:pre-wrap}
-      #${BOX_ID} .results{margin-top:10px;max-height:360px;overflow:auto;border:1px solid rgba(0,0,0,.08);border-radius:12px;background:#fafafa}
-      #${BOX_ID} table{width:100%;border-collapse:collapse;font-size:11px}
+      #${BOX_ID} .status{margin-top:8px;padding:8px 10px;border-radius:12px;background:#f8fafc;border:1px solid rgba(0,0,0,.08)}
+      #${BOX_ID} .results{margin-top:8px;max-height:380px;overflow:auto;border:1px solid rgba(0,0,0,.08);border-radius:12px;background:#fff}
+      #${BOX_ID} table{width:100%;border-collapse:collapse;font:12px/1.4 Arial,sans-serif}
       #${BOX_ID} th,#${BOX_ID} td{border-bottom:1px solid rgba(0,0,0,.08);padding:6px 8px;text-align:left;vertical-align:top}
-      #${BOX_ID} th{position:sticky;top:0;background:#fff;z-index:1}
-      #${BOX_ID} .small{font-size:10px;color:#666}
+      #${BOX_ID} th{position:sticky;top:0;background:#f8fafc;z-index:1}
       #${BOX_ID} .hiddenBody{display:none}
-      tr.bmbyUsersLinkHit{outline:3px solid rgba(37,99,235,.9)!important;box-shadow:0 0 0 5px rgba(37,99,235,.16) inset!important;background:rgba(37,99,235,.08)!important}
+      #${BOX_ID} .navHint{margin-top:8px;padding:8px 10px;border-radius:12px;background:#f8fafc;border:1px solid rgba(37,99,235,.10)}
     `;
     document.head.appendChild(s);
   }
@@ -5003,520 +5246,425 @@ function __bootIPBX_USERS_SCAN_HELPER__(){
     if (el) el.textContent = msg;
   }
 
+  function updateContextMeta(){
+    const ctx = loadHubContext();
+    const prefixEl = document.querySelector(`#${BOX_ID} [data-x="ctxPrefix"]`);
+    const partEl = document.querySelector(`#${BOX_ID} [data-x="ctxPartition"]`);
+    const nameEl = document.querySelector(`#${BOX_ID} [data-x="ctxName"]`);
+    const pageEl = document.querySelector(`#${BOX_ID} [data-x="ctxPage"]`);
+    if (prefixEl) prefixEl.textContent = ctx.prefix || '—';
+    if (partEl) partEl.textContent = ctx.partition || '—';
+    if (nameEl) nameEl.textContent = ctx.name || '—';
+    if (pageEl) pageEl.textContent = path.replace('/ipbx/','');
+  }
+
   function updatePauseButton(){
     const btn = document.querySelector(`#${BOX_ID} [data-x="pause"]`);
     if (!btn) return;
-    btn.textContent = scanState.paused ? 'המשך' : 'עצור';
     btn.disabled = !scanState.running;
+    btn.textContent = scanState.paused ? 'המשך' : 'עצור';
   }
 
-  async function waitIfPaused(){
-    while (scanState.paused && !scanState.cancel) {
-      setStatus('הסריקה מושהית. לחץ המשך כדי להמשיך.');
-      await new Promise(r => setTimeout(r, 250));
-    }
+  function wait(ms){ return new Promise(r => setTimeout(r, ms)); }
+  async function waitIfPaused(){ while (scanState.paused && !scanState.cancel) await wait(200); }
+  function absUrl(href, base){ try { return new URL(href, base || location.href).toString(); } catch(e){ return ''; } }
+  async function fetchText(url){ const res = await fetch(url, { credentials:'include' }); if (!res.ok) throw new Error(`HTTP ${res.status} on ${url}`); return await res.text(); }
+  function parseHtml(html, url){ const doc = new DOMParser().parseFromString(html, 'text/html'); try { doc.__bmbyBaseUrl = url; } catch(e){} return doc; }
+  function getInputValue(doc, id){ const el = doc.getElementById(id); return norm(el && ('value' in el ? el.value : el.textContent)); }
+  function getText(doc, sel){ const el = doc.querySelector(sel); return norm(el ? el.textContent : ''); }
+  function hasText(doc, re){ return re.test(norm(doc.body ? doc.body.textContent : '')); }
+  function extractByRegex(text, re){ const m = text.match(re); return m ? norm(m[1]) : ''; }
+
+  function extractExtensionRecord(html, url, linkMeta){
+    const doc = parseHtml(html, url);
+    const panelText = norm((doc.querySelector('#__qbws_wspanel729_shell') || doc.querySelector('#wspanel729') || doc.body).textContent || '');
+    const extension = getInputValue(doc, 'txt_ext_num');
+    const extensionCaption = getText(doc, '#txt_ext_numcaption');
+    const textToScan = panelText + ' ' + norm(doc.body ? doc.body.textContent : '');
+    const cfAlways = extractByRegex(textToScan, new RegExp('Call\\s*Forward\\s*Always\\s*is\\s*Enabled\\s*to\\s*:\\s*([^\\n\\r<]+)', 'i')).replace(/\s*\(by\s*default\).*$/i, '').trim();
+    const cfNoAnswer = extractByRegex(textToScan, new RegExp('Call\\s*Forward\\s*No\\s*Answer\\s*is\\s*Enabled\\s*to\\s*:\\s*([^\\n\\r<]+)', 'i')).replace(/\s*\(by\s*default\).*$/i, '').trim();
+    return {
+      pageUrl: url,
+      id: getInputValue(doc, 'hdn_user_id') || linkMeta.id || '',
+      linkLabel: linkMeta.label || '',
+      extension,
+      extensionCaption,
+      displayName: getInputValue(doc, 'txt_display_name'),
+      directDid: getInputValue(doc, 'txt_direct_did'),
+      outboundCid: getInputValue(doc, 'txt_outbound_cid'),
+      email: getInputValue(doc, 'txt_email_address'),
+      uniqueAddress: getInputValue(doc, 'txt_unique_address'),
+      macAddress: getInputValue(doc, 'txt_mac_address'),
+      alsoDial: getInputValue(doc, 'txt_dial_also'),
+      dndStatus: extractByRegex(textToScan, /(DnD\s*is\s*Currently\s*(?:On|Off))/i),
+      callForwardAlways: cfAlways,
+      callForwardNoAnswer: cfNoAnswer,
+      autoIncomingRecording: hasText(doc, /Automatic\s*Incoming\s*Call\s*Recording/i) ? 'Yes' : '',
+      autoOutgoingRecording: hasText(doc, /Automatic\s*Outgoing\s*Call\s*Recording/i) ? 'Yes' : '',
+      // partitionPinCode removed from output per v1.4.44
+    };
   }
 
-  function absoluteUrl(u){
-    try { return new URL(u, location.href).toString(); } catch(e){ return ''; }
-  }
-
-  function getUserLinksFromDoc(rootDoc){
-    const seen = new Set();
+  function getUserLinksFromDoc(doc){
     const out = [];
-    Array.from(rootDoc.querySelectorAll('a[href*="users.php?id="]')).forEach(a => {
-      const href = absoluteUrl(a.getAttribute('href') || '');
+    const seen = new Set();
+    Array.from(doc.querySelectorAll('a[href*="users.php?id="]')).forEach(a => {
+      const href = absUrl(a.getAttribute('href') || '', doc.__bmbyBaseUrl || location.href);
       if (!href || seen.has(href)) return;
-      const idm = href.match(/[?&]id=(\d+)/i);
-      const row = a.closest('tr');
-      const rowText = norm(row ? row.textContent : a.textContent);
-      const img = a.querySelector('img[alt],img[title]');
-      const label = norm(a.textContent || img?.getAttribute('title') || img?.getAttribute('alt') || rowText || ('User '+(idm ? idm[1] : '')));
       seen.add(href);
-      out.push({ href, id: idm ? idm[1] : '', label, rowText });
+      const m = href.match(/[?&]id=(\d+)/i);
+      const row = a.closest('tr');
+      out.push({ href, id: m ? m[1] : '', label: norm(a.textContent) || 'Open', rowText: norm(row && row.textContent) });
     });
     return out;
   }
 
-  function getUsersEditPageNumber(url){
-    try {
-      const u = new URL(url, location.href);
-      const raw = u.searchParams.get('_qb_users_lister_page');
-      const n = parseInt(raw || '0', 10);
-      return Number.isFinite(n) && n >= 0 ? n : 0;
-    } catch(e) {
-      return 0;
-    }
-  }
-
-  function getStrictNextUsersEditUrlFromDoc(rootDoc, baseUrl){
+  function getUsersEditPageNumber(url){ try { const u = new URL(url, location.href); return Number(u.searchParams.get('_qb_users_lister_page') || '0') || 0; } catch(e){ return 0; } }
+  function getStrictNextUsersEditUrlFromDoc(doc, currentUrl){
+    const currentPage = getUsersEditPageNumber(currentUrl);
     const candidates = [];
-    const push = (raw) => {
-      const v = norm(raw);
-      if (!v) return;
-      try {
-        const abs = new URL(v, baseUrl || location.href).toString();
-        if (!/\/ipbx\/users_edit\.php/i.test(abs)) return;
-        if (!/[?&]_qb_users_lister_page=\d+/i.test(abs)) return;
-        candidates.push(abs);
-      } catch(e) {}
-    };
-
-    Array.from(rootDoc.querySelectorAll('img[title="Next"], img[src*="NEXT.gif"], img[src*="next.gif"]')).forEach(img => {
-      const oc = img.getAttribute('onclick') || img.closest('[onclick]')?.getAttribute('onclick') || '';
-      const m = oc.match(/window\.location\s*=\s*['"]([^'"]*users_edit\.php[^'"]*)['"]/i)
-             || oc.match(/window\.location\s*=\s*['"]([^'"]*_qb_users_lister_page=\d+[^'"]*)['"]/i);
-      if (m) push(m[1]);
-      const parentA = img.closest('a[href]');
-      if (parentA) push(parentA.getAttribute('href') || '');
+    Array.from(doc.querySelectorAll('img[title="Next"], img[src*="NEXT.gif"]')).forEach(img => {
+      const oc = img.getAttribute('onclick') || '';
+      const m = oc.match(/window\.location\s*=\s*['"]([^'"]*users_edit\.php[^'"]*)['"]/i);
+      if (m && m[1]) candidates.push(absUrl(m[1], doc.__bmbyBaseUrl || currentUrl));
     });
-
-    Array.from(rootDoc.querySelectorAll('a[title="Next"], a[href*="_qb_users_lister_page="]')).forEach(a => {
-      const txt = norm(a.textContent || a.getAttribute('title') || '');
-      if (txt === 'Next' || /_qb_users_lister_page=/i.test(a.getAttribute('href') || '')) {
-        push(a.getAttribute('href') || '');
-      }
-    });
-
-    const currentPage = getUsersEditPageNumber(baseUrl || location.href);
-    const valid = Array.from(new Set(candidates)).filter(u => getUsersEditPageNumber(u) === currentPage + 1);
-    return valid[0] || '';
-  }
-
-  function parseHtml(html, baseUrl){
-    const doc = document.implementation.createHTMLDocument('tmp');
-    doc.documentElement.innerHTML = html;
-    const base = doc.createElement('base');
-    base.href = baseUrl;
-    doc.head.appendChild(base);
-    return doc;
-  }
-
-  function fetchText(url){
-    return new Promise((resolve, reject) => {
-      try {
-        if (typeof GM_xmlhttpRequest === 'function') {
-          GM_xmlhttpRequest({
-            method: 'GET',
-            url,
-            onload: (res) => resolve(String(res.responseText || '')),
-            onerror: (err) => reject(err)
-          });
-        } else {
-          fetch(url, { credentials: 'include' }).then(r => r.text()).then(resolve).catch(reject);
-        }
-      } catch (e) { reject(e); }
-    });
-  }
-
-  function readField(field){
-    if (!field) return '';
-    if (field.tagName === 'SELECT') return norm(field.options[field.selectedIndex]?.text || field.value || '');
-    if (field.type === 'checkbox' || field.type === 'radio') return field.checked ? 'Yes' : 'No';
-    return norm(field.value || field.textContent || '');
-  }
-
-  function readBySelectors(doc, selectors){
-    for (const sel of selectors) {
-      const el = doc.querySelector(sel);
-      if (!el) continue;
-      const v = readField(el) || norm(el.textContent);
-      if (v) return v;
-    }
+    Array.from(doc.querySelectorAll('a[href*="users_edit.php?_qb_users_lister_page="]')).forEach(a => { candidates.push(absUrl(a.getAttribute('href') || '', doc.__bmbyBaseUrl || currentUrl)); });
+    for (const url of candidates) { const nextPage = getUsersEditPageNumber(url); if (nextPage === currentPage + 1) return url; }
     return '';
-  }
-
-  function readCaptionValue(doc, captionId){
-    const cap = doc.getElementById(captionId);
-    return norm(cap ? cap.textContent : '');
-  }
-
-  function textById(doc, id){
-    const el = doc.getElementById(id);
-    return norm(el ? el.textContent : '');
-  }
-
-
-  function getPanel729WholeText(doc){
-    const root = doc.getElementById('__qbws_wspanel729_shell') || doc.getElementById('wspanel729') || doc.querySelector('table.parameter_box') || doc.body;
-    return norm(root ? root.textContent : '');
-  }
-
-  function readPanelValueFromWholeText(doc, label){
-    const whole = getPanel729WholeText(doc);
-    if (!whole) return '';
-    let re = null;
-    if (/Always/i.test(label)) {
-      re = /Call\s*Forward\s*Always\s*is\s*Enabled\s*to\s*:\s*(.*?)\s*(?:\(by\s*default\)|$)/i;
-    } else if (/No\s*Answer/i.test(label)) {
-      re = /Call\s*Forward\s*No\s*Answer\s*is\s*Enabled\s*to\s*:\s*(.*?)\s*(?:\(by\s*default\)|$)/i;
-    } else {
-      return '';
-    }
-    const m = whole.match(re);
-    return m ? norm(m[1]) : '';
-  }
-
-  function readPanelLine(doc, patterns){
-    const spans = Array.from(doc.querySelectorAll('#wspanel729 span.normal, #wspanel729 .normal, #__qbws_wspanel729_shell span.normal, #__qbws_wspanel729_shell .normal'));
-    for (const sp of spans) {
-      const txt = norm(sp.textContent);
-      if (!txt) continue;
-      for (const re of patterns) {
-        const m = txt.match(re);
-        if (m) return m[1] ? norm(m[1]) : txt;
-      }
-    }
-    return '';
-  }
-
-  function hasPanelText(doc, text){
-    const whole = norm((doc.getElementById('wspanel729') || doc.getElementById('__qbws_wspanel729_shell') || doc.body).textContent);
-    return whole.includes(text) ? 'Yes' : '';
-  }
-
-  function extractExtensionRecord(html, url, seed){
-    const doc = parseHtml(html, url);
-    const rec = {
-      pageUrl: url,
-      id: readBySelectors(doc, ['#hdn_user_id','input[name="hdn_user_id"]']) || (seed?.id || ''),
-      linkLabel: seed?.label || '',
-      extension: readBySelectors(doc, ['#txt_ext_num','input[name="txt_ext_num"]']),
-      extensionCaption: readCaptionValue(doc, 'txt_ext_numcaption'),
-      displayName: readBySelectors(doc, ['#txt_display_name','input[name="txt_display_name"]']),
-      directDid: readBySelectors(doc, ['#txt_direct_did','input[name="txt_direct_did"]']),
-      outboundCid: readBySelectors(doc, ['#txt_outbound_cid','input[name="txt_outbound_cid"]']),
-      email: readBySelectors(doc, ['#txt_email_address','input[name="txt_email_address"]']),
-      uniqueAddress: readBySelectors(doc, ['#txt_unique_address','input[name="txt_unique_address"]']),
-      macAddress: readBySelectors(doc, ['#txt_mac_address','input[name="txt_mac_address"]']),
-      alsoDial: readBySelectors(doc, ['#txt_dial_also','input[name="txt_dial_also"]']),
-      dndStatus: textById(doc, 'cpt_dnd_status') || readPanelLine(doc, [/^DnD is Currently (.+)$/i]),
-      callForwardAlways: readPanelLine(doc, [/^Call\s*Forward\s*Always\s*is\s*Enabled\s*to:\s*(.+?)\s*\(by\s*default\)$/i, /^Call\s*Forward\s*Always\s*is\s*Enabled\s*to:\s*(.+)$/i]) || readPanelValueFromWholeText(doc, 'Call Forward Always is Enabled to'),
-      callForwardNoAnswer: readPanelLine(doc, [/^Call\s*Forward\s*No\s*Answer\s*is\s*Enabled\s*to:\s*(.+?)\s*\(by\s*default\)$/i, /^Call\s*Forward\s*No\s*Answer\s*is\s*Enabled\s*to:\s*(.+)$/i]) || readPanelValueFromWholeText(doc, 'Call Forward No Answer is Enabled to'),
-      autoIncomingRecording: hasPanelText(doc, 'Automatic Incoming Call Recording'),
-      autoOutgoingRecording: hasPanelText(doc, 'Automatic Outgoing Call Recording'),
-      partitionPinCode: readPanelLine(doc, [/^Partition PIN Code \(For Risk Management\):\s*(.+)$/i]),
-      title: norm(doc.title || '')
-    };
-
-    if (!rec.extension && rec.extensionCaption) {
-      const m = rec.extensionCaption.match(/\[(\d{1,10})\]/);
-      if (m) rec.extension = m[1];
-    }
-    if (!rec.displayName && rec.extensionCaption) {
-      rec.displayName = norm(rec.extensionCaption.replace(/\[\d{1,10}\]/g,''));
-    }
-    return rec;
   }
 
   function toCsv(rows){
-    const headers = ['Seq','UserID','Extension','ExtensionCaption','DisplayName','DirectDID','OutboundCID','Email','UniqueAddress','MacAddress','AlsoDial','DnDStatus','CallForwardAlways','CallForwardNoAnswer','AutoIncomingRecording','AutoOutgoingRecording','PartitionPinCode','LinkLabel','PageURL'];
+    const headers = ['UserID','Extension','ExtensionCaption','DisplayName','DirectDID','OutboundCID','Email','UniqueAddress','MAC','AlsoDial','DnD','CallForwardAlways','CallForwardNoAnswer','AUTO IN REC','AUTO OUT REC','PageURL'];
     const lines = [headers.join(',')];
-    rows.forEach((r, idx) => {
-      const vals = [idx+1,r.id,r.extension,r.extensionCaption,r.displayName,r.directDid,r.outboundCid,r.email,r.uniqueAddress,r.macAddress,r.alsoDial,r.dndStatus,r.callForwardAlways,r.callForwardNoAnswer,r.autoIncomingRecording,r.autoOutgoingRecording,r.partitionPinCode,r.linkLabel,r.pageUrl]
-        .map(v => '"' + String(v==null?'':v).replace(/"/g,'""') + '"');
-      lines.push(vals.join(','));
-    });
-    return '\ufeff' + lines.join('\n');
+    for (const r of rows) lines.push([r.id,r.extension,r.extensionCaption,r.displayName,r.directDid,r.outboundCid,r.email,r.uniqueAddress,r.macAddress,r.alsoDial,r.dndStatus,r.callForwardAlways,r.callForwardNoAnswer,r.autoIncomingRecording,r.autoOutgoingRecording,r.pageUrl].map(v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"').join(','));
+    return '\ufeff' + lines.join('\r\n');
   }
 
-  function download(name, text, type){
-    const blob = new Blob([text], { type: type || 'text/plain;charset=utf-8' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = name;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
-  }
+  function download(name, text, type){ const blob = new Blob([text], { type: type || 'text/plain;charset=utf-8' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500); }
 
   function renderRows(rows){
-    const root = document.getElementById(BOX_ID);
-    if (!root) return;
-    const el = root.querySelector('[data-x="results"]');
-    if (!el) return;
-    if (!rows.length) {
-      el.innerHTML = '<div style="padding:10px">אין עדיין תוצאות</div>';
-      return;
-    }
-    el.innerHTML = `
-      <table>
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>UserID</th>
-            <th>Ext</th>
-            <th>Display Name</th>
-            <th>Direct DID</th>
-            <th>Outbound CID</th>
-            <th>Email</th>
-            <th>Unique Address</th>
-            <th>MAC</th>
-            <th>Also Dial</th>
-            <th>DnD</th>
-            <th>CF Always</th>
-            <th>CF No Answer</th>
-            <th>Auto In Rec</th>
-            <th>Auto Out Rec</th>
-            <th>PIN</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rows.map((r, idx) => `<tr>
-            <td>${idx+1}</td>
-            <td>${esc(r.id)}</td>
-            <td>${esc(r.extension || r.extensionCaption)}</td>
-            <td>${esc(r.displayName)}</td>
-            <td>${esc(r.directDid)}</td>
-            <td>${esc(r.outboundCid)}</td>
-            <td>${esc(r.email)}</td>
-            <td>${esc(r.uniqueAddress)}</td>
-            <td>${esc(r.macAddress)}</td>
-            <td>${esc(r.alsoDial)}</td>
-            <td>${esc(r.dndStatus)}</td>
-            <td>${esc(r.callForwardAlways)}</td>
-            <td>${esc(r.callForwardNoAnswer)}</td>
-            <td>${esc(r.autoIncomingRecording)}</td>
-            <td>${esc(r.autoOutgoingRecording)}</td>
-            <td>${esc(r.partitionPinCode)}</td>
-          </tr>`).join('')}
-        </tbody>
-      </table>
-    `;
+    const root = document.getElementById(BOX_ID); if (!root) return; const el = root.querySelector('[data-x="results"]'); if (!el) return;
+    if (!rows.length) { el.innerHTML = '<div style="padding:10px">אין עדיין תוצאות</div>'; return; }
+    el.innerHTML = `<table><thead><tr><th>#</th><th>UserID</th><th>Ext</th><th>Display Name</th><th>Direct DID</th><th>Outbound CID</th><th>Email</th><th>Unique Address</th><th>MAC</th><th>Also Dial</th><th>DnD</th><th>CF Always</th><th>CF No Answer</th><th>AUTO IN REC</th><th>AUTO OUT REC</th></tr></thead><tbody>${rows.map((r, idx) => `<tr><td>${idx+1}</td><td>${esc(r.id)}</td><td>${esc(r.extension || r.extensionCaption)}</td><td>${esc(r.displayName)}</td><td>${esc(r.directDid)}</td><td>${esc(r.outboundCid)}</td><td>${esc(r.email)}</td><td>${esc(r.uniqueAddress)}</td><td>${esc(r.macAddress)}</td><td>${esc(r.alsoDial)}</td><td>${esc(r.dndStatus)}</td><td>${esc(r.callForwardAlways)}</td><td>${esc(r.callForwardNoAnswer)}</td><td>${esc(r.autoIncomingRecording)}</td><td>${esc(r.autoOutgoingRecording)}</td></tr>`).join('')}</tbody></table>`;
   }
 
   function renderLinks(links){
-    const root = document.getElementById(BOX_ID);
-    if (!root) return;
-    const el = root.querySelector('[data-x="results"]');
-    if (!el) return;
-    if (!links.length) {
-      el.innerHTML = '<div style="padding:10px">לא נמצאו קישורים</div>';
-      return;
-    }
-    el.innerHTML = `
-      <table>
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>UserID</th>
-            <th>Label</th>
-            <th>Link</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${links.map((x, idx) => `<tr>
-            <td>${idx+1}</td>
-            <td>${esc(x.id || '')}</td>
-            <td>${esc(x.label || x.rowText || '')}</td>
-            <td><a href="${esc(x.href)}" target="_blank" rel="noopener noreferrer">פתח שלוחה</a></td>
-          </tr>`).join('')}
-        </tbody>
-      </table>
-    `;
+    const root = document.getElementById(BOX_ID); if (!root) return; const el = root.querySelector('[data-x="results"]'); if (!el) return;
+    if (!links.length) { el.innerHTML = '<div style="padding:10px">לא נמצאו קישורים</div>'; return; }
+    el.innerHTML = `<table><thead><tr><th>#</th><th>UserID</th><th>Label</th><th>Link</th></tr></thead><tbody>${links.map((x, idx) => `<tr><td>${idx+1}</td><td>${esc(x.id || '')}</td><td>${esc(x.label || x.rowText || '')}</td><td><a href="${esc(x.href)}" target="_blank" rel="noopener noreferrer">פתח שלוחה</a></td></tr>`).join('')}</tbody></table>`;
   }
 
   async function collectAllUserLinks(){
-    const all = [];
-    const seenLinks = new Set();
-    const seenPages = new Set();
-    let currentUrl = location.href;
-    let currentDoc = document;
-    let pageCounter = 0;
-    const maxPages = 25;
-
+    const all = []; const seenLinks = new Set(); const seenPages = new Set(); let currentUrl = location.href; let currentDoc = document; let pageCounter = 0; const maxPages = 25;
     while (currentUrl && !seenPages.has(currentUrl) && pageCounter < maxPages) {
-      seenPages.add(currentUrl);
-      pageCounter++;
-      const pageNo = getUsersEditPageNumber(currentUrl);
-      setStatus(`טוען דף שלוחות ${pageCounter} (pager ${pageNo})...`);
-
+      seenPages.add(currentUrl); pageCounter++; const pageNo = getUsersEditPageNumber(currentUrl); setStatus(`טוען דף שלוחות ${pageCounter} (pager ${pageNo})...`);
       let doc = currentDoc;
-      if (!doc) {
-        try {
-          const html = await fetchText(currentUrl);
-          doc = parseHtml(html, currentUrl);
-        } catch (e) {
-          log('pagination fetch failed', currentUrl, e);
-          break;
-        }
-      }
-
+      if (!doc) { try { const html = await fetchText(currentUrl); doc = parseHtml(html, currentUrl); } catch (e) { log('pagination fetch failed', currentUrl, e); break; } }
       const items = getUserLinksFromDoc(doc);
-      items.forEach(it => {
-        if (!seenLinks.has(it.href)) {
-          seenLinks.add(it.href);
-          all.push(it);
-        }
-      });
-
-      const nextUrl = getStrictNextUsersEditUrlFromDoc(doc, currentUrl);
-      if (!nextUrl) break;
-      if (seenPages.has(nextUrl)) break;
-      const nextPage = getUsersEditPageNumber(nextUrl);
-      if (nextPage !== pageNo + 1) break;
-
-      currentUrl = nextUrl;
-      currentDoc = null;
+      items.forEach(it => { if (!seenLinks.has(it.href)) { seenLinks.add(it.href); all.push(it); } });
+      const nextUrl = getStrictNextUsersEditUrlFromDoc(doc, currentUrl); if (!nextUrl) break; if (seenPages.has(nextUrl)) break; const nextPage = getUsersEditPageNumber(nextUrl); if (nextPage !== pageNo + 1) break;
+      currentUrl = nextUrl; currentDoc = null;
     }
-
-    if (pageCounter >= maxPages) {
-      setStatus(`נעצרתי אחרי ${maxPages} דפי USERS כדי למנוע ריצה אינסופית. כרגע נאספו ${all.length} שלוחות.`);
-    }
-
+    if (pageCounter >= maxPages) setStatus(`נעצרתי אחרי ${maxPages} דפי USERS כדי למנוע ריצה אינסופית. כרגע נאספו ${all.length} שלוחות.`);
     return all;
   }
 
   async function scanAllUsers(){
-    if (scanState.running) {
-      setStatus('כבר מתבצעת סריקה.');
-      return;
-    }
-    scanState.running = true;
-    scanState.paused = false;
-    scanState.cancel = false;
-    const scanBtn = document.querySelector(`#${BOX_ID} [data-x="scan"]`);
-    if (scanBtn) scanBtn.disabled = true;
-    updatePauseButton();
+    if (scanState.running) { setStatus('כבר מתבצעת סריקה.'); return; }
+    scanState.running = true; scanState.paused = false; scanState.cancel = false;
+    const scanBtn = document.querySelector(`#${BOX_ID} [data-x="scan"]`); if (scanBtn) scanBtn.disabled = true; updatePauseButton();
     try {
       setStatus('אוסף קישורי שלוחות מהעמוד הנוכחי ומהעמודים הבאים...');
       const links = await collectAllUserLinks();
-      if (!links.length) {
-        setStatus('לא נמצאו קישורי users.php?id=... במסך הזה.');
-        renderRows([]);
-        return;
-      }
+      if (!links.length) { setStatus('לא נמצאו קישורי users.php?id=... במסך הזה.'); renderRows([]); return; }
       setStatus(`נמצאו ${links.length} שלוחות. מתחיל סריקה...`);
       const out = [];
       for (let i=0; i<links.length; i++) {
-        if (scanState.cancel) {
-          setStatus(`הסריקה נעצרה. נשמרו ${out.length} תוצאות.`);
-          break;
-        }
+        if (scanState.cancel) { setStatus(`הסריקה נעצרה. נשמרו ${out.length} תוצאות.`); break; }
+        await waitIfPaused(); if (scanState.cancel) { setStatus(`הסריקה נעצרה. נשמרו ${out.length} תוצאות.`); break; }
+        const link = links[i]; setStatus(`סורק שלוחה ${i+1}/${links.length} | id=${link.id || '?'} ...`);
+        try { const html = await fetchText(link.href); const rec = extractExtensionRecord(html, link.href, link); out.push(rec); renderRows(out); }
+        catch (e) { out.push({ pageUrl: link.href, id: link.id || '', linkLabel: link.label || '', extension: '', extensionCaption:'', displayName: 'ERROR', directDid: '', outboundCid: '', email: '', uniqueAddress: '', macAddress: '', alsoDial: String(e), dndStatus:'', callForwardAlways:'', callForwardNoAnswer:'', autoIncomingRecording:'', autoOutgoingRecording:'' }); renderRows(out); log('user fetch failed', link.href, e); }
+      }
+      window.__bmbyUsersScanRows = out; if (!scanState.cancel) setStatus(`✅ הושלמה סריקה: ${out.length} שלוחות.`);
+    } finally { scanState.running = false; scanState.paused = false; scanState.cancel = false; if (scanBtn) scanBtn.disabled = false; updatePauseButton(); }
+  }
+
+  function loadPos(){ try { return JSON.parse(localStorage.getItem(POS_KEY) || 'null'); } catch(e){ return null; } }
+  function savePos(pos){ try { localStorage.setItem(POS_KEY, JSON.stringify(pos)); } catch(e){} }
+  function activateModule(name){ const box = document.getElementById(BOX_ID); if (!box) return; const currentModuleEl = box.querySelector('[data-x="currentModule"]'); const moduleButtons = Array.from(box.querySelectorAll('.modBtn')); const modulePanels = Array.from(box.querySelectorAll('.modulePanel')); moduleButtons.forEach(btn => btn.classList.toggle('active', btn.getAttribute('data-module') === name)); modulePanels.forEach(p => p.classList.toggle('active', p.getAttribute('data-panel') === name)); if (currentModuleEl) currentModuleEl.textContent = name; }
+  function goToModule(name){ const target = NAV_TARGETS[name] || ''; if (!target) { activateModule(name); setStatus(`המודול ${name} עדיין בשלד. נחבר את הדף המדויק בהמשך.`); return; } if (location.href !== target) location.assign(target); }
+  function buildUsersPanel(){ return `<div class="modulePanel ${isUsersPage ? 'active' : ''}" data-panel="USERS"><div class="muted">מודול USERS פעיל. הלוגיקה הקיימת נשמרה: סריקת שלוחות, עצור/המשך, יצוא CSV ורשימת קישורים.</div><div class="row"><button type="button" class="primary" data-x="scan">סרוק שלוחות</button><button type="button" data-x="pause" disabled>עצור</button><button type="button" data-x="export">ייצא CSV</button><button type="button" data-x="links">רשימת קישורים</button></div><div class="status" data-x="status">מוכן לסריקה.</div><div class="results" data-x="results"><div style="padding:10px">אין עדיין תוצאות</div></div></div>`; }
+  function buildPlaceholder(moduleName, text){ return `<div class="modulePanel" data-panel="${moduleName}"><div class="placeholder"><div><strong>${moduleName}</strong></div><div class="muted">${text}</div></div></div>`; }
+  function buildHomePanel(){ const ctx = loadHubContext(); return `<div class="modulePanel ${isPartitionPage ? 'active' : ''}" data-panel="HOME"><div class="placeholder"><div><strong>מרכז בקרה ראשי</strong></div><div class="muted">כאן בוחרים מודול לאחר בחירת PREFIX. USERS, AGENTS ו-IVR MENU כבר מחוברים. IVR SWITCH עדיין מחכה לחיבור טכני.</div><div class="navHint">PREFIX נוכחי: <strong>${esc(ctx.prefix || '—')}</strong> | Partition: <strong>${esc(ctx.partition || '—')}</strong></div><div class="row"><button type="button" class="primary" data-x="openUsers">פתח USERS</button><button type="button" data-x="homeAgents">AGENTS</button><button type="button" data-x="homeIvrMenu">IVR MENU</button><button type="button" data-x="homeIvrSwitch">IVR SWITCH</button></div></div></div>`; }
+
+  function mount(){
+    tryAutoOpenUsersPage(); if (document.getElementById(BOX_ID)) return; injectCss();
+    const box = document.createElement('div'); box.id = BOX_ID;
+    box.innerHTML = `<div class="head"><div class="drag" data-x="drag">BMBY IPBX HUB v1.4.44</div><div class="headBtns"><button type="button" data-x="min">_</button></div></div><div data-x="body"><div class="hubMeta"><div class="metaPill">Version: 1.4.44</div><div class="metaPill">Host: ${esc(location.host)}</div><div class="metaPill">Prefix: <span data-x="ctxPrefix">—</span></div><div class="metaPill">Partition: <span data-x="ctxPartition">—</span></div><div class="metaPill">Name: <span data-x="ctxName">—</span></div><div class="metaPill">Current Module: <span data-x="currentModule">${isPartitionPage ? 'HOME' : 'USERS'}</span></div><div class="metaPill">Page: <span data-x="ctxPage">${esc(path.replace('/ipbx/',''))}</span></div></div><div class="modules"><button type="button" class="modBtn ${isUsersPage ? 'active' : ''}" data-module="USERS">USERS</button><button type="button" class="modBtn" data-module="AGENTS">AGENTS</button><button type="button" class="modBtn" data-module="IVR MENU">IVR MENU</button><button type="button" class="modBtn" data-module="IVR SWITCH">IVR SWITCH</button></div>${buildHomePanel()}${buildUsersPanel()}${buildPlaceholder('AGENTS','לחץ AGENTS כדי לעבור למסך agents_list ולהפעיל את מודול הסריקה.')}${buildPlaceholder('IVR MENU','מודול IVR MENU כבר מחובר. לחץ IVR MENU כדי לעבור למסך הסריקה.')}${buildPlaceholder('IVR SWITCH','שלד המודול מוכן. כאן נחבר בהמשך את מנוע IVR SWITCH.')}</div>`;
+    document.body.appendChild(box);
+    const saved = loadPos(); if (saved && typeof saved.left === 'number' && typeof saved.top === 'number') { box.style.left = saved.left + 'px'; box.style.top = saved.top + 'px'; box.style.right = 'auto'; } else { box.style.right = '14px'; box.style.left = 'auto'; box.style.top = '14px'; }
+    let dragging = false, dx = 0, dy = 0; const dragHandle = box.querySelector('[data-x="drag"]');
+    dragHandle.addEventListener('mousedown', (ev) => { if (ev.button !== 0) return; dragging = true; const r = box.getBoundingClientRect(); dx = ev.clientX - r.left; dy = ev.clientY - r.top; ev.preventDefault(); });
+    window.addEventListener('mousemove', (ev) => { if (!dragging) return; const left = Math.max(6, Math.min(window.innerWidth - 100, ev.clientX - dx)); const top = Math.max(6, Math.min(window.innerHeight - 40, ev.clientY - dy)); box.style.left = left + 'px'; box.style.top = top + 'px'; box.style.right = 'auto'; savePos({ left, top }); });
+    window.addEventListener('mouseup', () => { dragging = false; });
+    box.querySelector('[data-x="min"]').addEventListener('click', () => { const body = box.querySelector('[data-x="body"]'); const hidden = body.classList.toggle('hiddenBody'); box.classList.toggle('min', hidden); });
+    Array.from(box.querySelectorAll('.modBtn')).forEach(btn => btn.addEventListener('click', () => { const name = btn.getAttribute('data-module') || 'USERS'; goToModule(name); }));
+    const openUsersBtn = box.querySelector('[data-x="openUsers"]'); if (openUsersBtn) openUsersBtn.addEventListener('click', () => goToModule('USERS'));
+    const homeAgents = box.querySelector('[data-x="homeAgents"]'); if (homeAgents) homeAgents.addEventListener('click', () => goToModule('AGENTS'));
+    const homeIvrMenu = box.querySelector('[data-x="homeIvrMenu"]'); if (homeIvrMenu) homeIvrMenu.addEventListener('click', () => goToModule('IVR MENU'));
+    const homeIvrSwitch = box.querySelector('[data-x="homeIvrSwitch"]'); if (homeIvrSwitch) homeIvrSwitch.addEventListener('click', () => { activateModule('IVR SWITCH'); setStatus('מודול IVR SWITCH עדיין בשלד.'); });
+    if (isUsersPage) {
+      box.querySelector('[data-x="scan"]').addEventListener('click', () => scanAllUsers());
+      box.querySelector('[data-x="pause"]').addEventListener('click', () => { if (!scanState.running) return; scanState.paused = !scanState.paused; updatePauseButton(); setStatus(scanState.paused ? 'הסריקה מושהית. לחץ המשך כדי להמשיך.' : 'ממשיך סריקה...'); });
+      box.querySelector('[data-x="export"]').addEventListener('click', () => { const rows = window.__bmbyUsersScanRows || []; if (!rows.length) { setStatus('אין תוצאות לייצוא עדיין.'); return; } download('bmby_ipbx_users_scan.csv', toCsv(rows), 'text/csv;charset=utf-8'); });
+      box.querySelector('[data-x="links"]').addEventListener('click', async () => { const links = await collectAllUserLinks(); setStatus(`נמצאו ${links.length} קישורי שלוחות.`); renderLinks(links); });
+      activateModule('USERS'); updatePauseButton();
+    } else { activateModule('HOME'); setStatus('בחרת PREFIX? עכשיו אפשר להיכנס ל-USERS מתוך ה-HUB.'); }
+    updateContextMeta();
+    window.addEventListener('bmby-ipbx-context-updated', () => { updateContextMeta(); if (isPartitionPage) { activateModule('HOME'); setStatus('המרכזייה נבחרה. עכשיו אפשר לפתוח את המודול הרצוי.'); } });
+    window.addEventListener('bmby-ipbx-open-module', (ev) => { const name = ev && ev.detail && ev.detail.module ? String(ev.detail.module) : 'HOME'; if (name === 'USERS') return goToModule('USERS'); activateModule(name); setStatus(`המודול ${name} עדיין בשלד.`); });
+    try { const pending = localStorage.getItem('BMBY__IPBX_HUB_TARGET_MODULE') || ''; if (pending) { localStorage.removeItem('BMBY__IPBX_HUB_TARGET_MODULE'); if (pending === 'USERS') setTimeout(() => goToModule('USERS'), 50); else setTimeout(() => { activateModule(pending); setStatus(`המודול ${pending} עדיין בשלד.`); }, 50); } } catch(e){}
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, { once:true });
+  else mount();
+}
+
+
+
+function __bootIPBX_AGENTS_SCAN_HELPER__(){
+  'use strict';
+
+  const host = location.host;
+  const path = location.pathname;
+  const allowed = ['voip.bmby.com','voip2.bmby.com','82.166.228.179','82.166.228.180'];
+  if (!allowed.includes(host)) return;
+  if (path !== '/ipbx/agents_list.php' && path !== '/ipbx/agents.php') return;
+
+  const BOX_ID = 'bmby-ipbx-agents-scan-box';
+  const STYLE_ID = 'bmby-ipbx-agents-scan-style';
+  const POS_KEY = 'bmby_ipbx_agents_scan_box_pos_v1';
+  const HUB_CTX_KEY = 'BMBY__IPBX_HUB_CONTEXT';
+  const LOG_PREFIX = '[BMBY IPBX AGENTS v1.4.44]';
+  const scanState = { running:false, paused:false, cancel:false };
+  const NAV_TARGETS = {
+    'USERS': 'http://voip2.bmby.com/ipbx/users_edit.php',
+    'AGENTS': 'http://voip2.bmby.com/ipbx/agents_list.php',
+    'IVR MENU': 'http://voip2.bmby.com/ipbx/ivr_edit.php?type=MENU',
+    'IVR SWITCH': ''
+  };
+
+  function log(){ try { console.log(LOG_PREFIX, ...arguments); } catch(e){} }
+  function norm(s){ return String(s||'').replace(/[ ‎‏\s]+/g,' ').trim(); }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
+  function loadHubContext(){ try { return JSON.parse(localStorage.getItem(HUB_CTX_KEY) || '{}') || {}; } catch(e){ return {}; } }
+  function setStatus(msg){ const el = document.querySelector(`#${BOX_ID} [data-x="status"]`); if (el) el.textContent = msg; }
+  function wait(ms){ return new Promise(r => setTimeout(r, ms)); }
+  async function waitIfPaused(){ while (scanState.paused && !scanState.cancel) await wait(200); }
+  function absUrl(href, base){ try { return new URL(href, base || location.href).toString(); } catch(e){ return ''; } }
+  async function fetchText(url){ const res = await fetch(url, { credentials:'include' }); if (!res.ok) throw new Error(`HTTP ${res.status} on ${url}`); return await res.text(); }
+  function parseHtml(html, url){ const doc = new DOMParser().parseFromString(html, 'text/html'); try { doc.__bmbyBaseUrl = url; } catch(e){} return doc; }
+  function getInputValue(doc, id){ const el = doc.getElementById(id); return norm(el && ('value' in el ? el.value : el.textContent)); }
+  function download(name, text, type){ const blob = new Blob([text], { type: type || 'text/plain;charset=utf-8' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0); }
+  function updatePauseButton(){ const btn = document.querySelector(`#${BOX_ID} [data-x="pause"]`); if (!btn) return; btn.disabled = !scanState.running; btn.textContent = scanState.paused ? 'המשך' : 'עצור'; }
+  function loadPos(){ try { return JSON.parse(localStorage.getItem(POS_KEY) || 'null'); } catch(e){ return null; } }
+  function savePos(pos){ try { localStorage.setItem(POS_KEY, JSON.stringify(pos)); } catch(e){} }
+
+  function injectCss(){
+    if (document.getElementById(STYLE_ID)) return;
+    const s = document.createElement('style');
+    s.id = STYLE_ID;
+    s.textContent = `
+      #${BOX_ID}{position:fixed;top:14px;right:14px;left:auto;z-index:2147483647;width:760px;max-width:calc(100vw - 28px);background:#fff;color:#111;border:1px solid rgba(0,0,0,.14);border-radius:16px;box-shadow:0 14px 40px rgba(0,0,0,.20);padding:12px;font:700 12px/1.45 Arial,sans-serif}
+      #${BOX_ID}.min{width:300px}
+      #${BOX_ID} .head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+      #${BOX_ID} .drag{cursor:move;user-select:none;font-weight:900}
+      #${BOX_ID} .headBtns{display:flex;gap:6px;align-items:center}
+      #${BOX_ID} .row{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
+      #${BOX_ID} .hubMeta{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 8px}
+      #${BOX_ID} .metaPill{padding:4px 8px;border-radius:999px;background:#f5f5f5;border:1px solid rgba(0,0,0,.07);font-size:11px}
+      #${BOX_ID} .modules{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:8px 0 10px}
+      #${BOX_ID} .modBtn{padding:10px 8px;border:1px solid rgba(0,0,0,.12);border-radius:12px;background:#fff;cursor:pointer;font-weight:800;text-align:center}
+      #${BOX_ID} .modBtn.active{background:rgba(37,99,235,.10);border-color:rgba(37,99,235,.35);box-shadow:0 0 0 2px rgba(37,99,235,.08) inset}
+      #${BOX_ID} .muted{color:#666;font-size:11px}
+      #${BOX_ID} button{padding:9px 10px;border:1px solid rgba(0,0,0,.16);background:#fff;border-radius:12px;cursor:pointer;font-weight:700}
+      #${BOX_ID} button.primary{background:rgba(37,99,235,.10);border-color:rgba(37,99,235,.35)}
+      #${BOX_ID} .status{margin-top:8px;padding:8px 10px;border-radius:12px;background:#f8fafc;border:1px solid rgba(0,0,0,.08)}
+      #${BOX_ID} .results{margin-top:8px;max-height:380px;overflow:auto;border:1px solid rgba(0,0,0,.08);border-radius:12px;background:#fff}
+      #${BOX_ID} table{width:100%;border-collapse:collapse;font:12px/1.4 Arial,sans-serif}
+      #${BOX_ID} th,#${BOX_ID} td{border-bottom:1px solid rgba(0,0,0,.08);padding:6px 8px;text-align:left;vertical-align:top}
+      #${BOX_ID} th{position:sticky;top:0;background:#f8fafc;z-index:1}
+      #${BOX_ID} .hiddenBody{display:none}
+    `;
+    document.head.appendChild(s);
+  }
+
+  function updateContextMeta(){
+    const ctx = loadHubContext();
+    const prefixEl = document.querySelector(`#${BOX_ID} [data-x="ctxPrefix"]`);
+    const partEl = document.querySelector(`#${BOX_ID} [data-x="ctxPartition"]`);
+    const nameEl = document.querySelector(`#${BOX_ID} [data-x="ctxName"]`);
+    const pageEl = document.querySelector(`#${BOX_ID} [data-x="ctxPage"]`);
+    if (prefixEl) prefixEl.textContent = ctx.prefix || '—';
+    if (partEl) partEl.textContent = ctx.partition || '—';
+    if (nameEl) nameEl.textContent = ctx.name || '—';
+    if (pageEl) pageEl.textContent = path.replace('/ipbx/','');
+  }
+
+  function extractByRegex(text, re){ const m = String(text||'').match(re); return m ? norm(m[1]) : ''; }
+
+  function extractAgentRecord(html, url, linkMeta){
+    const doc = parseHtml(html, url);
+    const panelText = norm((doc.querySelector('#__qbws_wspanel729_shell') || doc.querySelector('#wspanel729') || doc.body).textContent || '');
+    const textToScan = panelText + ' ' + norm(doc.body ? doc.body.textContent : '');
+    const cfAlways = extractByRegex(textToScan, new RegExp('Call\\s*Forward\\s*Always\\s*is\\s*Enabled\\s*to\\s*:\\s*([^\\n\\r<]+)', 'i')).replace(/\s*\(by\s*default\).*$/i, '').trim();
+    const cfNoAnswer = extractByRegex(textToScan, new RegExp('Call\\s*Forward\\s*No\\s*Answer\\s*is\\s*Enabled\\s*to\\s*:\\s*([^\\n\\r<]+)', 'i')).replace(/\s*\(by\s*default\).*$/i, '').trim();
+    return {
+      pageUrl: url,
+      id: getInputValue(doc, 'hdn_user_id') || linkMeta.id || '',
+      agentNumber: getInputValue(doc, 'txt_ext_num'),
+      displayName: getInputValue(doc, 'txt_display_name'),
+      directDid: getInputValue(doc, 'txt_direct_did'),
+      outboundCid: getInputValue(doc, 'txt_outbound_cid'),
+      email: getInputValue(doc, 'txt_email_address'),
+      callForwardAlways: cfAlways,
+      callForwardNoAnswer: cfNoAnswer,
+      rawTitle: norm(doc.title || ''),
+      linkLabel: linkMeta.label || ''
+    };
+  }
+
+  function getAgentLinksFromDoc(doc){
+    const out = [];
+    const seen = new Set();
+    Array.from(doc.querySelectorAll('a[href*="agents.php?id="]')).forEach(a => {
+      const href = absUrl(a.getAttribute('href') || '', doc.__bmbyBaseUrl || location.href);
+      if (!href || seen.has(href)) return;
+      seen.add(href);
+      const m = href.match(/[?&]id=(\d+)/i);
+      const row = a.closest('tr');
+      out.push({ href, id: m ? m[1] : '', label: norm(a.textContent) || 'Open', rowText: norm(row && row.textContent) });
+    });
+    return out;
+  }
+
+  function getAgentsListPageNumber(url){ try { const u = new URL(url, location.href); return Number(u.searchParams.get('_qb_agents_lister_page') || '0') || 0; } catch(e){ return 0; } }
+  function getStrictNextAgentsListUrlFromDoc(doc, currentUrl){
+    const currentPage = getAgentsListPageNumber(currentUrl);
+    const candidates = [];
+    Array.from(doc.querySelectorAll('img[title="Next"], img[src*="NEXT.gif"]')).forEach(img => {
+      const oc = img.getAttribute('onclick') || '';
+      const m = oc.match(/window\.location\s*=\s*['"]([^'"]*agents_list\.php[^'"]*)['"]/i);
+      if (m && m[1]) candidates.push(absUrl(m[1], doc.__bmbyBaseUrl || currentUrl));
+    });
+    Array.from(doc.querySelectorAll('a[href*="agents_list.php?_qb_agents_lister_page="]')).forEach(a => { candidates.push(absUrl(a.getAttribute('href') || '', doc.__bmbyBaseUrl || currentUrl)); });
+    for (const url of candidates) { const nextPage = getAgentsListPageNumber(url); if (nextPage === currentPage + 1) return url; }
+    return '';
+  }
+
+  async function collectAllAgentLinks(){
+    const out = [];
+    const seenPages = new Set();
+    const seenLinks = new Set();
+    let currentUrl = location.href;
+    let guard = 0;
+    while (currentUrl && !seenPages.has(currentUrl) && guard < 50) {
+      guard++;
+      seenPages.add(currentUrl);
+      const html = currentUrl === location.href ? document.documentElement.outerHTML : await fetchText(currentUrl);
+      const doc = parseHtml(html, currentUrl);
+      getAgentLinksFromDoc(doc).forEach(link => { if (!seenLinks.has(link.href)) { seenLinks.add(link.href); out.push(link); } });
+      const nextUrl = getStrictNextAgentsListUrlFromDoc(doc, currentUrl);
+      if (!nextUrl || seenPages.has(nextUrl)) break;
+      currentUrl = nextUrl;
+    }
+    return out;
+  }
+
+  function toCsv(rows){
+    const headers = ['AgentID','AgentNumber','DisplayName','DirectDID','OutboundCID','Email','CallForwardAlways','CallForwardNoAnswer','PageURL'];
+    const escCsv = (v) => { const s = String(v==null?'':v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s; };
+    return [headers.join(','), ...rows.map(r => [r.id, r.agentNumber, r.displayName, r.directDid, r.outboundCid, r.email, r.callForwardAlways, r.callForwardNoAnswer, r.pageUrl].map(escCsv).join(','))].join('\n');
+  }
+
+  function renderRows(rows){
+    const root = document.querySelector(`#${BOX_ID} [data-x="results"]`);
+    if (!root) return;
+    if (!rows || !rows.length) { root.innerHTML = '<div style="padding:10px">אין עדיין תוצאות</div>'; return; }
+    root.innerHTML = `<table><thead><tr><th>AgentID</th><th>Agent Number</th><th>Display Name</th><th>Direct DID</th><th>Outbound CID</th><th>Email</th><th>CallForwardAlways</th><th>CallForwardNoAnswer</th></tr></thead><tbody>${rows.map(r => `<tr><td>${esc(r.id)}</td><td>${esc(r.agentNumber)}</td><td>${esc(r.displayName)}</td><td>${esc(r.directDid)}</td><td>${esc(r.outboundCid)}</td><td>${esc(r.email)}</td><td>${esc(r.callForwardAlways)}</td><td>${esc(r.callForwardNoAnswer)}</td></tr>`).join('')}</tbody></table>`;
+  }
+
+  function renderLinks(links){
+    const root = document.querySelector(`#${BOX_ID} [data-x="results"]`);
+    if (!root) return;
+    if (!links.length) { root.innerHTML = '<div style="padding:10px">לא נמצאו קישורים</div>'; return; }
+    root.innerHTML = `<table><thead><tr><th>#</th><th>AgentID</th><th>Link</th></tr></thead><tbody>${links.map((l, idx) => `<tr><td>${idx+1}</td><td>${esc(l.id)}</td><td><a href="${esc(l.href)}" target="_blank" rel="noopener noreferrer">${esc(l.href)}</a></td></tr>`).join('')}</tbody></table>`;
+  }
+
+  async function scanAllAgents(){
+    const scanBtn = document.querySelector(`#${BOX_ID} [data-x="scan"]`);
+    if (scanState.running) return;
+    scanState.running = true; scanState.paused = false; scanState.cancel = false; updatePauseButton(); if (scanBtn) scanBtn.disabled = true;
+    try {
+      const links = await collectAllAgentLinks();
+      if (!links.length) { setStatus('לא נמצאו קישורי agents.php?id=... במסך הזה.'); renderRows([]); return; }
+      setStatus(`נמצאו ${links.length} Agents. מתחיל סריקה...`);
+      const out = [];
+      for (let i=0; i<links.length; i++) {
+        if (scanState.cancel) { setStatus(`הסריקה נעצרה. נשמרו ${out.length} תוצאות.`); break; }
         await waitIfPaused();
-        if (scanState.cancel) {
-          setStatus(`הסריקה נעצרה. נשמרו ${out.length} תוצאות.`);
-          break;
-        }
+        if (scanState.cancel) { setStatus(`הסריקה נעצרה. נשמרו ${out.length} תוצאות.`); break; }
         const link = links[i];
-        setStatus(`סורק שלוחה ${i+1}/${links.length} | id=${link.id || '?'} ...`);
+        setStatus(`סורק Agent ${i+1}/${links.length} | id=${link.id || '?'} ...`);
         try {
           const html = await fetchText(link.href);
-          const rec = extractExtensionRecord(html, link.href, link);
+          const rec = extractAgentRecord(html, link.href, link);
           out.push(rec);
           renderRows(out);
         } catch (e) {
-          out.push({ pageUrl: link.href, id: link.id || '', linkLabel: link.label || '', extension: '', extensionCaption:'', displayName: 'ERROR', directDid: '', outboundCid: '', email: '', uniqueAddress: '', macAddress: '', alsoDial: String(e), dndStatus:'', callForwardAlways:'', callForwardNoAnswer:'', autoIncomingRecording:'', autoOutgoingRecording:'', partitionPinCode:'' });
+          out.push({ pageUrl: link.href, id: link.id || '', agentNumber: '', displayName: 'ERROR', directDid: '', outboundCid: '', email: String(e), callForwardAlways:'', callForwardNoAnswer:'', rawTitle:'', linkLabel: link.label || '' });
           renderRows(out);
-          log('user fetch failed', link.href, e);
+          log('agent fetch failed', link.href, e);
         }
       }
-      window.__bmbyUsersScanRows = out;
-      if (!scanState.cancel) {
-        setStatus(`✅ הושלמה סריקה: ${out.length} שלוחות.`);
-      }
+      window.__bmbyAgentsScanRows = out;
+      if (!scanState.cancel) setStatus(`✅ הושלמה סריקה: ${out.length} Agents.`);
     } finally {
-      scanState.running = false;
-      scanState.paused = false;
-      scanState.cancel = false;
-      if (scanBtn) scanBtn.disabled = false;
-      updatePauseButton();
+      scanState.running = false; scanState.paused = false; scanState.cancel = false; if (scanBtn) scanBtn.disabled = false; updatePauseButton();
     }
   }
 
-  function loadPos(){
-    try { return JSON.parse(localStorage.getItem(POS_KEY) || 'null'); } catch(e){ return null; }
-  }
-  function savePos(pos){
-    try { localStorage.setItem(POS_KEY, JSON.stringify(pos)); } catch(e){}
+  function goToModule(name){
+    const target = NAV_TARGETS[name] || '';
+    if (!target) { setStatus(`המודול ${name} עדיין בשלד.`); return; }
+    if (location.href !== target) location.assign(target);
   }
 
   function mount(){
-    tryAutoOpenUsersPage();
-    if (path !== '/ipbx/users.php' && path !== '/ipbx/users_edit.php') return;
     if (document.getElementById(BOX_ID)) return;
     injectCss();
     const box = document.createElement('div');
     box.id = BOX_ID;
-    box.innerHTML = `
-      <div class="head">
-        <div class="drag" data-x="drag">IPBX Users Scan v1.4.29</div>
-        <div class="headBtns">
-          <button type="button" data-x="min">_</button>
-        </div>
-      </div>
-      <div data-x="body">
-        <div class="muted">סורק את כל הקישורים מסוג users.php?id=... במסך USERS / USERS EDIT, כולל עמודים הבאים, ומחזיר פרטים אמיתיים מכל שלוחה. כפתור רשימת קישורים מציג קישורים לחיצים אמיתיים.</div>
-        <div class="row">
-          <button type="button" class="primary" data-x="scan">סרוק שלוחות</button>
-          <button type="button" data-x="pause" disabled>עצור</button>
-          <button type="button" data-x="export">ייצא CSV</button>
-          <button type="button" data-x="links">רשימת קישורים</button>
-        </div>
-        <div class="status" data-x="status">מוכן לסריקה.</div>
-        <div class="results" data-x="results"><div style="padding:10px">אין עדיין תוצאות</div></div>
-      </div>
-    `;
+    box.innerHTML = `<div class="head"><div class="drag" data-x="drag">BMBY IPBX AGENTS v1.4.44</div><div class="headBtns"><button type="button" data-x="min">_</button></div></div><div data-x="body"><div class="hubMeta"><div class="metaPill">Version: 1.4.44</div><div class="metaPill">Host: ${esc(location.host)}</div><div class="metaPill">Prefix: <span data-x="ctxPrefix">—</span></div><div class="metaPill">Partition: <span data-x="ctxPartition">—</span></div><div class="metaPill">Name: <span data-x="ctxName">—</span></div><div class="metaPill">Current Module: AGENTS</div><div class="metaPill">Page: <span data-x="ctxPage">${esc(path.replace('/ipbx/',''))}</span></div></div><div class="modules"><button type="button" class="modBtn" data-module="USERS">USERS</button><button type="button" class="modBtn active" data-module="AGENTS">AGENTS</button><button type="button" class="modBtn" data-module="IVR MENU">IVR MENU</button><button type="button" class="modBtn" data-module="IVR SWITCH">IVR SWITCH</button></div><div class="muted">מודול AGENTS – סריקה ראשונית. כרגע מושכים: Agent Number, Display Name, Direct DID, Outbound CID, Email, Call Forward Always, Call Forward No Answer.</div><div class="row"><button type="button" class="primary" data-x="scan">סרוק Agents</button><button type="button" data-x="pause" disabled>עצור</button><button type="button" data-x="export">ייצא CSV</button><button type="button" data-x="links">רשימת קישורים</button></div><div class="status" data-x="status">מוכן לסריקה.</div><div class="results" data-x="results"><div style="padding:10px">אין עדיין תוצאות</div></div></div>`;
     document.body.appendChild(box);
 
     const saved = loadPos();
-    if (saved && typeof saved.left === 'number' && typeof saved.top === 'number') {
-      box.style.left = saved.left + 'px';
-      box.style.top = saved.top + 'px';
-      box.style.right = 'auto';
-    } else {
-      box.style.right = '14px';
-      box.style.left = 'auto';
-      box.style.top = '14px';
-    }
+    if (saved && typeof saved.left === 'number' && typeof saved.top === 'number') { box.style.left = saved.left + 'px'; box.style.top = saved.top + 'px'; box.style.right = 'auto'; }
+    else { box.style.right = '14px'; box.style.left = 'auto'; box.style.top = '14px'; }
 
-    let dragging = false;
-    let dx = 0, dy = 0;
+    let dragging = false, dx = 0, dy = 0;
     const dragHandle = box.querySelector('[data-x="drag"]');
-
-    dragHandle.addEventListener('mousedown', (ev) => {
-      if (ev.button !== 0) return;
-      dragging = true;
-      const r = box.getBoundingClientRect();
-      dx = ev.clientX - r.left;
-      dy = ev.clientY - r.top;
-      ev.preventDefault();
-    });
-    window.addEventListener('mousemove', (ev) => {
-      if (!dragging) return;
-      const left = Math.max(6, Math.min(window.innerWidth - 100, ev.clientX - dx));
-      const top = Math.max(6, Math.min(window.innerHeight - 40, ev.clientY - dy));
-      box.style.left = left + 'px';
-      box.style.top = top + 'px';
-      box.style.right = 'auto';
-      savePos({ left, top });
-    });
+    dragHandle.addEventListener('mousedown', (ev) => { if (ev.button !== 0) return; dragging = true; const r = box.getBoundingClientRect(); dx = ev.clientX - r.left; dy = ev.clientY - r.top; ev.preventDefault(); });
+    window.addEventListener('mousemove', (ev) => { if (!dragging) return; const left = Math.max(6, Math.min(window.innerWidth - 100, ev.clientX - dx)); const top = Math.max(6, Math.min(window.innerHeight - 40, ev.clientY - dy)); box.style.left = left + 'px'; box.style.top = top + 'px'; box.style.right = 'auto'; savePos({ left, top }); });
     window.addEventListener('mouseup', () => { dragging = false; });
-
-    box.querySelector('[data-x="scan"]').addEventListener('click', () => scanAllUsers());
-    box.querySelector('[data-x="pause"]').addEventListener('click', () => {
-      if (!scanState.running) return;
-      scanState.paused = !scanState.paused;
-      updatePauseButton();
-      setStatus(scanState.paused ? 'הסריקה מושהית. לחץ המשך כדי להמשיך.' : 'ממשיך סריקה...');
-    });
-    box.querySelector('[data-x="export"]').addEventListener('click', () => {
-      const rows = window.__bmbyUsersScanRows || [];
-      if (!rows.length) { setStatus('אין תוצאות לייצוא עדיין.'); return; }
-      download('bmby_ipbx_users_scan.csv', toCsv(rows), 'text/csv;charset=utf-8');
-    });
-    box.querySelector('[data-x="links"]').addEventListener('click', async () => {
-      const links = await collectAllUserLinks();
-      setStatus(`נמצאו ${links.length} קישורי שלוחות.`);
-      renderLinks(links);
-    });
-
-    const body = box.querySelector('[data-x="body"]');
-    updatePauseButton();
-    box.querySelector('[data-x="min"]').addEventListener('click', () => {
-      const hidden = body.classList.toggle('hiddenBody');
-      box.classList.toggle('min', hidden);
-    });
+    box.querySelector('[data-x="min"]').addEventListener('click', () => { const body = box.querySelector('[data-x="body"]'); const hidden = body.classList.toggle('hiddenBody'); box.classList.toggle('min', hidden); });
+    Array.from(box.querySelectorAll('.modBtn')).forEach(btn => btn.addEventListener('click', () => { const name = btn.getAttribute('data-module') || 'AGENTS'; goToModule(name); }));
+    box.querySelector('[data-x="scan"]').addEventListener('click', () => scanAllAgents());
+    box.querySelector('[data-x="pause"]').addEventListener('click', () => { if (!scanState.running) return; scanState.paused = !scanState.paused; updatePauseButton(); setStatus(scanState.paused ? 'הסריקה מושהית. לחץ המשך כדי להמשיך.' : 'ממשיך סריקה...'); });
+    box.querySelector('[data-x="export"]').addEventListener('click', () => { const rows = window.__bmbyAgentsScanRows || []; if (!rows.length) { setStatus('אין תוצאות לייצוא עדיין.'); return; } download('bmby_ipbx_agents_scan.csv', toCsv(rows), 'text/csv;charset=utf-8'); });
+    box.querySelector('[data-x="links"]').addEventListener('click', async () => { const links = await collectAllAgentLinks(); setStatus(`נמצאו ${links.length} קישורי Agents.`); renderLinks(links); });
+    updateContextMeta();
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, { once:true });
@@ -6301,12 +6449,296 @@ function applyFilter(qRaw) {
   const path = location.pathname || '';
   const isNihul = path.startsWith('/nihul/') && (host === 'www.bmby.com' || host === 'bmby.com');
   const isIPBXDialplan = (path === '/ipbx/dialplan_edit.php') && (host === 'voip.bmby.com' || host === 'voip2.bmby.com' || host === '82.166.228.179' || host === '82.166.228.180');
+
+function __bootIPBX_IVR_MENU_SCAN_HELPER__(){
+  const host = location.host;
+  const path = location.pathname;
+  const typeParam = String(new URL(location.href).searchParams.get('type') || '').toLowerCase();
+  if (path !== '/ipbx/ivr_edit.php' || typeParam !== 'menu') return;
+
+  const BOX_ID = 'bmby-ipbx-ivr-menu-scan-box';
+  const STYLE_ID = 'bmby-ipbx-ivr-menu-scan-style';
+  const POS_KEY = 'bmby_ipbx_ivr_menu_scan_box_pos_v1';
+  const HUB_CTX_KEY = 'BMBY__IPBX_HUB_CONTEXT';
+  const LOG_PREFIX = '[BMBY IPBX IVR MENU v1.4.44]';
+  const scanState = { running:false, paused:false, cancel:false };
+  const NAV_TARGETS = {
+    'USERS': 'http://voip2.bmby.com/ipbx/users_edit.php',
+    'AGENTS': 'http://voip2.bmby.com/ipbx/agents_list.php',
+    'IVR MENU': 'http://voip2.bmby.com/ipbx/ivr_edit.php?type=MENU',
+    'IVR SWITCH': ''
+  };
+
+  function log(){ try { console.log(LOG_PREFIX, ...arguments); } catch(e){} }
+  function norm(s){ return String(s||'').replace(/[ ‎‏\s]+/g,' ').trim(); }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
+  function loadHubContext(){ try { return JSON.parse(localStorage.getItem(HUB_CTX_KEY) || '{}') || {}; } catch(e){ return {}; } }
+  function setStatus(msg){ const el = document.querySelector(`#${BOX_ID} [data-x="status"]`); if (el) el.textContent = msg; }
+  function wait(ms){ return new Promise(r => setTimeout(r, ms)); }
+  async function waitIfPaused(){ while (scanState.paused && !scanState.cancel) await wait(200); }
+  function absUrl(href, base){ try { return new URL(href, base || location.href).toString(); } catch(e){ return ''; } }
+  async function fetchText(url){ const res = await fetch(url, { credentials:'include' }); if (!res.ok) throw new Error(`HTTP ${res.status} on ${url}`); return await res.text(); }
+  function parseHtml(html, url){ const doc = new DOMParser().parseFromString(html, 'text/html'); try { doc.__bmbyBaseUrl = url; } catch(e){} return doc; }
+  function getInputValue(doc, id){ const el = doc.getElementById(id); return norm(el && ('value' in el ? el.value : el.textContent)); }
+  function getSelectedText(doc, id){ const el = doc.getElementById(id); if (!el) return ''; if (el.tagName === 'SELECT') { const opt = el.selectedOptions && el.selectedOptions[0]; if (opt) return norm(opt.textContent); const sel = Array.from(el.options || []).find(o => o.selected); if (sel) return norm(sel.textContent); } return norm(el.value || el.textContent); }
+  function updatePauseButton(){ const btn = document.querySelector(`#${BOX_ID} [data-x="pause"]`); if (!btn) return; btn.disabled = !scanState.running; btn.textContent = scanState.paused ? 'המשך' : 'עצור'; }
+  function loadPos(){ try { return JSON.parse(localStorage.getItem(POS_KEY) || 'null'); } catch(e){ return null; } }
+  function savePos(pos){ try { localStorage.setItem(POS_KEY, JSON.stringify(pos)); } catch(e){} }
+  function download(name, text, type){ const blob = new Blob([text], { type: type || 'text/plain;charset=utf-8' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0); }
+
+  function injectCss(){
+    if (document.getElementById(STYLE_ID)) return;
+    const s = document.createElement('style');
+    s.id = STYLE_ID;
+    s.textContent = `
+      #${BOX_ID}{position:fixed;top:14px;right:14px;left:auto;z-index:2147483647;width:820px;max-width:calc(100vw - 28px);background:#fff;color:#111;border:1px solid rgba(0,0,0,.14);border-radius:16px;box-shadow:0 14px 40px rgba(0,0,0,.20);padding:12px;font:700 12px/1.45 Arial,sans-serif}
+      #${BOX_ID}.min{width:320px}
+      #${BOX_ID} .head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+      #${BOX_ID} .drag{cursor:move;user-select:none;font-weight:900}
+      #${BOX_ID} .headBtns{display:flex;gap:6px;align-items:center}
+      #${BOX_ID} .row{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
+      #${BOX_ID} .hubMeta{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 8px}
+      #${BOX_ID} .metaPill{padding:4px 8px;border-radius:999px;background:#f5f5f5;border:1px solid rgba(0,0,0,.07);font-size:11px}
+      #${BOX_ID} .modules{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:8px 0 10px}
+      #${BOX_ID} .modBtn{padding:10px 8px;border:1px solid rgba(0,0,0,.12);border-radius:12px;background:#fff;cursor:pointer;font-weight:800;text-align:center}
+      #${BOX_ID} .modBtn.active{background:rgba(37,99,235,.10);border-color:rgba(37,99,235,.35);box-shadow:0 0 0 2px rgba(37,99,235,.08) inset}
+      #${BOX_ID} .muted{color:#666;font-size:11px}
+      #${BOX_ID} button{padding:9px 10px;border:1px solid rgba(0,0,0,.16);background:#fff;border-radius:12px;cursor:pointer;font-weight:700}
+      #${BOX_ID} button.primary{background:rgba(37,99,235,.10);border-color:rgba(37,99,235,.35)}
+      #${BOX_ID} .status{margin-top:8px;padding:8px 10px;border-radius:12px;background:#f8fafc;border:1px solid rgba(0,0,0,.08)}
+      #${BOX_ID} .results{margin-top:8px;max-height:420px;overflow:auto;border:1px solid rgba(0,0,0,.08);border-radius:12px;background:#fff}
+      #${BOX_ID} table{width:100%;border-collapse:collapse;font:12px/1.4 Arial,sans-serif}
+      #${BOX_ID} th,#${BOX_ID} td{border-bottom:1px solid rgba(0,0,0,.08);padding:6px 8px;text-align:left;vertical-align:top}
+      #${BOX_ID} th{position:sticky;top:0;background:#f8fafc;z-index:1}
+      #${BOX_ID} .hiddenBody{display:none}
+    `;
+    document.head.appendChild(s);
+  }
+
+  function updateContextMeta(){
+    const ctx = loadHubContext();
+    const prefixEl = document.querySelector(`#${BOX_ID} [data-x="ctxPrefix"]`);
+    const partEl = document.querySelector(`#${BOX_ID} [data-x="ctxPartition"]`);
+    const nameEl = document.querySelector(`#${BOX_ID} [data-x="ctxName"]`);
+    const pageEl = document.querySelector(`#${BOX_ID} [data-x="ctxPage"]`);
+    if (prefixEl) prefixEl.textContent = ctx.prefix || '—';
+    if (partEl) partEl.textContent = ctx.partition || '—';
+    if (nameEl) nameEl.textContent = ctx.name || '—';
+    if (pageEl) pageEl.textContent = path.replace('/ipbx/','') + '?type=menu';
+  }
+
+  function parseActions(doc){
+    const rows = [];
+    for (let i = 0; i < 20; i++) {
+      const value = getInputValue(doc, `txt_value_${i}`);
+      const actionType = getSelectedText(doc, `objects_txt_action_${i}`);
+      const actionTarget = getSelectedText(doc, `targets_txt_action_${i}`) || getInputValue(doc, `goto_txt_action_${i}`);
+      if (!value && !actionType && !actionTarget) continue;
+      rows.push({ value, actionType, actionTarget, summary: `${value || '?'}=>${actionType || '?'}:${actionTarget || ''}`.trim() });
+    }
+    return rows;
+  }
+
+  function extractIvrId(doc, url){
+    try { const u = new URL(url, location.href); const direct = u.searchParams.get('id'); if (direct) return direct; } catch(e){}
+    const attrsLink = Array.from(doc.querySelectorAll('a[onclick*="ivr_attributes.php?id="]')).map(a => a.getAttribute('onclick') || '').find(Boolean) || '';
+    const m = attrsLink.match(/ivr_attributes\.php\?id=(\d+)/i);
+    return m ? m[1] : '';
+  }
+
+  function extractIvrRecord(html, url, linkMeta){
+    const doc = parseHtml(html, url);
+    const actions = parseActions(doc);
+    const rec = {
+      pageUrl: url,
+      id: extractIvrId(doc, url) || linkMeta.id || '',
+      ivrName: getInputValue(doc, 'txt_ivr_name'),
+      testExtension: getInputValue(doc, 'txt_goto_ivr_extension'),
+      didNumber: getInputValue(doc, 'txt_did_number'),
+      announcement1: getSelectedText(doc, 'txt_announcements_1'),
+      announcement2: getSelectedText(doc, 'txt_announcements_2'),
+      announcement3: getSelectedText(doc, 'txt_announcements_3'),
+      actionsCount: String(actions.length),
+      actionsSummary: actions.map(a => a.summary).join(' | '),
+      rawTitle: norm(doc.title || ''),
+      linkLabel: linkMeta.label || ''
+    };
+    const isEmptyIvr =
+      !String(rec.ivrName || '').trim() &&
+      !String(rec.testExtension || '').trim() &&
+      !String(rec.didNumber || '').trim() &&
+      !String(rec.announcement1 || '').trim() &&
+      !String(rec.announcement2 || '').trim() &&
+      !String(rec.announcement3 || '').trim() &&
+      String(rec.actionsCount || '0') === '0';
+    if (isEmptyIvr) return null;
+    return rec;
+  }
+
+  function getIvrLinksFromDoc(doc){
+    const out = [];
+    const seenHref = new Set();
+    const seenId = new Set();
+    function shouldKeepIvrUrl(u){
+      const p = (u.pathname || '').toLowerCase();
+      const isList = p.endsWith('/ivr_edit.php');
+      const isOpen = p.endsWith('/ivr.php');
+      if (!isList && !isOpen) return false;
+      if (u.searchParams.get('qbjs') || u.searchParams.get('qbjax') || u.searchParams.get('wsqbcallfunc') || u.searchParams.get('triggerer')) return false;
+      const type = String(u.searchParams.get('type') || '').toLowerCase();
+      if (type && type !== 'menu') return false;
+      if (isOpen && !String(u.searchParams.get('id') || '').trim()) return false;
+      return true;
+    }
+    function pushLink(rawHref, label){
+      const href = absUrl(rawHref || '', doc.__bmbyBaseUrl || location.href);
+      if (!href) return;
+      try {
+        const u = new URL(href, location.href);
+        if (!shouldKeepIvrUrl(u)) return;
+        const id = String(u.searchParams.get('id') || '').trim();
+        if (id) {
+          if (seenId.has(id)) return;
+          seenId.add(id);
+        } else if (seenHref.has(u.toString())) {
+          return;
+        }
+        seenHref.add(u.toString());
+        out.push({ href: u.toString(), id, label: norm(label) || 'Open IVR MENU' });
+      } catch(e) {}
+    }
+    Array.from(doc.querySelectorAll('a[href*="ivr.php?type="], a[href*="ivr_edit.php?type="]')).forEach(a => {
+      const row = a.closest('tr');
+      const label = (row && (row.querySelector('[id*="users_lister_name_span_"]') || row.querySelector('td:nth-child(3) span'))) ? ((row.querySelector('[id*="users_lister_name_span_"]') || row.querySelector('td:nth-child(3) span')).textContent || '') : a.textContent;
+      pushLink(a.getAttribute('href') || '', label);
+    });
+    Array.from(doc.querySelectorAll('[onclick*="ivr.php"], [onclick*="ivr_edit.php"]')).forEach(el => {
+      const oc = el.getAttribute('onclick') || '';
+      const matches = [...oc.matchAll(/['"]([^'"]*(?:ivr|ivr_edit)\.php[^'"]*)['"]/ig)];
+      matches.forEach(m => { if (m && m[1]) pushLink(m[1], el.textContent || el.getAttribute('title') || 'Open IVR MENU'); });
+    });
+    const currentName = getInputValue(doc, 'txt_ivr_name');
+    const currentId = extractIvrId(doc, location.href);
+    if (currentName && currentId) {
+      const u = new URL(urlWithTypeMenu(location.href), location.href);
+      u.searchParams.set('id', currentId);
+      pushLink(u.toString(), currentName || doc.title || 'Current IVR MENU');
+    }
+    return out;
+  }
+
+  function urlWithTypeMenu(url){
+    try { const u = new URL(url, location.href); if (!u.searchParams.get('type')) u.searchParams.set('type', 'menu'); return u.toString(); } catch(e){ return url; }
+  }
+
+  async function collectAllIvrLinks(){
+    const out = [];
+    const seen = new Set();
+    const html = document.documentElement.outerHTML;
+    const doc = parseHtml(html, location.href);
+    getIvrLinksFromDoc(doc).forEach(link => { if (!seen.has(link.href)) { seen.add(link.href); out.push(link); } });
+    return out;
+  }
+
+  function toCsv(rows){
+    const headers = ['IVRID','IVRName','TestExtension','DIDNumber','Announcement1','Announcement2','Announcement3','ActionsCount','ActionsSummary','PageURL'];
+    const escCsv = (v) => { const s = String(v==null?'':v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s; };
+    return [headers.join(','), ...rows.map(r => [r.id, r.ivrName, r.testExtension, r.didNumber, r.announcement1, r.announcement2, r.announcement3, r.actionsCount, r.actionsSummary, r.pageUrl].map(escCsv).join(','))].join('\n');
+  }
+
+  function renderRows(rows){
+    const root = document.querySelector(`#${BOX_ID} [data-x="results"]`);
+    if (!root) return;
+    if (!rows || !rows.length) { root.innerHTML = '<div style="padding:10px">אין עדיין תוצאות</div>'; return; }
+    root.innerHTML = `<table><thead><tr><th>IVRID</th><th>IVR Name</th><th>Test Ext</th><th>DID</th><th>Announcement 1</th><th>Announcement 2</th><th>Announcement 3</th><th>Actions Count</th><th>Actions Summary</th></tr></thead><tbody>${rows.map(r => `<tr><td>${esc(r.id)}</td><td>${esc(r.ivrName)}</td><td>${esc(r.testExtension)}</td><td>${esc(r.didNumber)}</td><td>${esc(r.announcement1)}</td><td>${esc(r.announcement2)}</td><td>${esc(r.announcement3)}</td><td>${esc(r.actionsCount)}</td><td>${esc(r.actionsSummary)}</td></tr>`).join('')}</tbody></table>`;
+  }
+
+  function renderLinks(links){
+    const root = document.querySelector(`#${BOX_ID} [data-x="results"]`);
+    if (!root) return;
+    if (!links.length) { root.innerHTML = '<div style="padding:10px">לא נמצאו קישורי IVR MENU</div>'; return; }
+    root.innerHTML = `<table><thead><tr><th>#</th><th>IVRID</th><th>Link</th></tr></thead><tbody>${links.map((l, idx) => `<tr><td>${idx+1}</td><td>${esc(l.id)}</td><td><a href="${esc(l.href)}" target="_blank" rel="noopener noreferrer">${esc(l.href)}</a></td></tr>`).join('')}</tbody></table>`;
+  }
+
+  async function scanAllIvrMenus(){
+    const scanBtn = document.querySelector(`#${BOX_ID} [data-x="scan"]`);
+    if (scanState.running) return;
+    scanState.running = true; scanState.paused = false; scanState.cancel = false; updatePauseButton(); if (scanBtn) scanBtn.disabled = true;
+    try {
+      const links = await collectAllIvrLinks();
+      if (!links.length) { setStatus('לא נמצאו קישורי IVR MENU במסך הזה.'); renderRows([]); return; }
+      setStatus(`נמצאו ${links.length} קישורי IVR MENU. מתחיל סריקה...`);
+      const out = [];
+      for (let i=0; i<links.length; i++) {
+        if (scanState.cancel) { setStatus(`הסריקה נעצרה. נשמרו ${out.length} תוצאות.`); break; }
+        await waitIfPaused();
+        if (scanState.cancel) { setStatus(`הסריקה נעצרה. נשמרו ${out.length} תוצאות.`); break; }
+        const link = links[i];
+        setStatus(`סורק IVR MENU ${i+1}/${links.length} | id=${link.id || '?'} ...`);
+        try {
+          const html = link.href === location.href ? document.documentElement.outerHTML : await fetchText(link.href);
+          const rec = extractIvrRecord(html, link.href, link);
+          if (!rec) {
+            setStatus(`מדלג על IVR ריק ${i+1}/${links.length} | id=${link.id || '?'}`);
+            continue;
+          }
+          out.push(rec);
+          renderRows(out);
+        } catch (e) {
+          out.push({ pageUrl: link.href, id: link.id || '', ivrName: 'ERROR', testExtension: '', didNumber: '', announcement1: '', announcement2: '', announcement3: '', actionsCount: '0', actionsSummary: String(e), rawTitle:'', linkLabel: link.label || '' });
+          renderRows(out);
+          log('ivr menu fetch failed', link.href, e);
+        }
+      }
+      window.__bmbyIvrMenuScanRows = out;
+      if (!scanState.cancel) setStatus(`✅ הושלמה סריקה: ${out.length} IVR MENU.`);
+    } finally {
+      scanState.running = false; scanState.paused = false; scanState.cancel = false; if (scanBtn) scanBtn.disabled = false; updatePauseButton();
+    }
+  }
+
+  function goToModule(name){ const target = NAV_TARGETS[name] || ''; if (!target) { setStatus(`המודול ${name} עדיין בשלד.`); return; } if (location.href !== target) location.assign(target); }
+
+  function mount(){
+    if (document.getElementById(BOX_ID)) return;
+    injectCss();
+    const box = document.createElement('div');
+    box.id = BOX_ID;
+    box.innerHTML = `<div class="head"><div class="drag" data-x="drag">BMBY IPBX IVR MENU v1.4.44</div><div class="headBtns"><button type="button" data-x="min">_</button></div></div><div data-x="body"><div class="hubMeta"><div class="metaPill">Version: 1.4.44</div><div class="metaPill">Host: ${esc(location.host)}</div><div class="metaPill">Prefix: <span data-x="ctxPrefix">—</span></div><div class="metaPill">Partition: <span data-x="ctxPartition">—</span></div><div class="metaPill">Name: <span data-x="ctxName">—</span></div><div class="metaPill">Current Module: IVR MENU</div><div class="metaPill">Page: <span data-x="ctxPage">ivr_edit.php?type=menu</span></div></div><div class="modules"><button type="button" class="modBtn" data-module="USERS">USERS</button><button type="button" class="modBtn" data-module="AGENTS">AGENTS</button><button type="button" class="modBtn active" data-module="IVR MENU">IVR MENU</button><button type="button" class="modBtn" data-module="IVR SWITCH">IVR SWITCH</button></div><div class="muted">מודול IVR MENU – התחלה ראשונית. כרגע מושכים: IVR Name, Test IVR Extension, DID Number, Announcement 1-3, וכמה פעולות נמצאו עם סיכום שלהן.</div><div class="row"><button type="button" class="primary" data-x="scan">סרוק IVR MENU</button><button type="button" data-x="pause" disabled>עצור</button><button type="button" data-x="export">ייצא CSV</button><button type="button" data-x="links">רשימת קישורים</button></div><div class="status" data-x="status">מוכן לסריקה.</div><div class="results" data-x="results"><div style="padding:10px">אין עדיין תוצאות</div></div></div>`;
+    document.body.appendChild(box);
+
+    const saved = loadPos();
+    if (saved && typeof saved.left === 'number' && typeof saved.top === 'number') { box.style.left = saved.left + 'px'; box.style.top = saved.top + 'px'; box.style.right = 'auto'; }
+    else { box.style.right = '14px'; box.style.left = 'auto'; box.style.top = '14px'; }
+
+    let dragging = false, dx = 0, dy = 0;
+    const dragHandle = box.querySelector('[data-x="drag"]');
+    dragHandle.addEventListener('mousedown', (ev) => { if (ev.button !== 0) return; dragging = true; const r = box.getBoundingClientRect(); dx = ev.clientX - r.left; dy = ev.clientY - r.top; ev.preventDefault(); });
+    window.addEventListener('mousemove', (ev) => { if (!dragging) return; const left = Math.max(6, Math.min(window.innerWidth - 100, ev.clientX - dx)); const top = Math.max(6, Math.min(window.innerHeight - 40, ev.clientY - dy)); box.style.left = left + 'px'; box.style.top = top + 'px'; box.style.right = 'auto'; savePos({ left, top }); });
+    window.addEventListener('mouseup', () => { dragging = false; });
+    box.querySelector('[data-x="min"]').addEventListener('click', () => { const body = box.querySelector('[data-x="body"]'); const hidden = body.classList.toggle('hiddenBody'); box.classList.toggle('min', hidden); });
+    Array.from(box.querySelectorAll('.modBtn')).forEach(btn => btn.addEventListener('click', () => { const name = btn.getAttribute('data-module') || 'IVR MENU'; goToModule(name); }));
+    box.querySelector('[data-x="scan"]').addEventListener('click', () => scanAllIvrMenus());
+    box.querySelector('[data-x="pause"]').addEventListener('click', () => { if (!scanState.running) return; scanState.paused = !scanState.paused; updatePauseButton(); setStatus(scanState.paused ? 'הסריקה מושהית. לחץ המשך כדי להמשיך.' : 'ממשיך סריקה...'); });
+    box.querySelector('[data-x="export"]').addEventListener('click', () => { const rows = window.__bmbyIvrMenuScanRows || []; if (!rows.length) { setStatus('אין תוצאות לייצוא עדיין.'); return; } download('bmby_ipbx_ivr_menu_scan.csv', toCsv(rows), 'text/csv;charset=utf-8'); });
+    box.querySelector('[data-x="links"]').addEventListener('click', async () => { const links = await collectAllIvrLinks(); setStatus(`נמצאו ${links.length} קישורי IVR MENU.`); renderLinks(links); });
+    updateContextMeta();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, { once:true });
+  else mount();
+}
+
   const isIPBXPartition = (path === '/ipbx/partition_selection.php') && (host === 'voip.bmby.com' || host === 'voip2.bmby.com' || host === '82.166.228.179' || host === '82.166.228.180');
   const isIPBXUsersEdit = (path === '/ipbx/users_edit.php') && (host === 'voip.bmby.com' || host === 'voip2.bmby.com' || host === '82.166.228.179' || host === '82.166.228.180');
+  const isIPBXAgents = (path === '/ipbx/agents_list.php' || path === '/ipbx/agents.php') && (host === 'voip.bmby.com' || host === 'voip2.bmby.com' || host === '82.166.228.179' || host === '82.166.228.180');
+  const isIPBXIvrMenu = (path === '/ipbx/ivr_edit.php' && String(new URL(location.href).searchParams.get('type') || '').toLowerCase() === 'menu') && (host === 'voip.bmby.com' || host === 'voip2.bmby.com' || host === '82.166.228.179' || host === '82.166.228.180');
   if (isNihul) { try { __bootNIHUL_DASHBOARD__(); } catch(e){ console.error('[BMBY PROD] NIHUL boot error', e); } /* no-return */ }
   if (isIPBXDialplan) { try { __bootIPBX_DID_HELPER__(); } catch(e){ console.error('[BMBY PROD] IPBX boot error', e); } /* no-return */ }
   if (isIPBXPartition) { try { __bootIPBX_PARTITION_PREFIX_HELPER__(); } catch(e){ console.error('[BMBY PROD] IPBX partition boot error', e); } /* no-return */ }
   if (isIPBXUsersEdit) { try { __bootIPBX_USERS_SCAN_HELPER__(); } catch(e){ console.error('[BMBY PROD] IPBX users scan boot error', e); } /* no-return */ }
+  if (isIPBXAgents) { try { __bootIPBX_AGENTS_SCAN_HELPER__(); } catch(e){ console.error('[BMBY PROD] IPBX agents scan boot error', e); } /* no-return */ }
+  if (isIPBXIvrMenu) { try { __bootIPBX_IVR_MENU_SCAN_HELPER__(); } catch(e){ console.error('[BMBY PROD] IPBX IVR MENU scan boot error', e); } /* no-return */ }
 })();
 
 
